@@ -1440,6 +1440,8 @@ You must create or modify a workspace file through a series of prompts over mult
     ---@return boolean
     send_code = true,
 
+    events_include_response = false, -- Include the actual request response in RequestFinished events
+
     job_start_delay = 1500, -- Delay in milliseconds between cmd tools
     submit_delay = 2000, -- Delay in milliseconds before auto-submitting the chat buffer
   },

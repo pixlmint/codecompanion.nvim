@@ -269,6 +269,13 @@ function Client:send_sync(payload, opts)
   adapters.call_handler(adapter, "teardown")
 
   if not opts.silent then
+    if config.opts.events_include_response then
+      if response then
+        event_opts.response = response
+      elseif err then
+        event_opts.error = err
+      end
+    end
     utils.fire("RequestFinished", event_opts)
   end
 
@@ -385,6 +392,13 @@ function Client:request(payload, actions, opts)
         end
 
         if not opts.silent then
+          if config.opts.events_include_response then
+            if opts.status == "error" then
+              opts.error = { message = string.format([[%d error: ]], data.status), stderr = data }
+            else
+              opts.response = data
+            end
+          end
           utils.fire("RequestFinished", opts)
         end
         cleanup(opts.status)
@@ -399,6 +413,9 @@ function Client:request(payload, actions, opts)
       self.methods.schedule(function()
         actions.callback(err, nil)
         if not opts.silent then
+          if config.opts.events_include_response then
+            opts.error = err
+          end
           utils.fire("RequestFinished", opts)
         end
       end)
