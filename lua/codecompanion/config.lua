@@ -37,9 +37,13 @@ local defaults = {
     },
     acp = {
       auggie_cli = "auggie_cli",
+      cagent = "cagent",
       claude_code = "claude_code",
       codex = "codex",
       gemini_cli = "gemini_cli",
+      goose = "goose",
+      kimi_cli = "kimi_cli",
+      opencode = "opencode",
       opts = {
         show_defaults = true, -- Show default adapters
       },
@@ -684,6 +688,12 @@ The user is working on a %s machine. Please respond with system specific command
           callback = "keymaps.always_accept",
           description = "Accept and enable auto mode",
         },
+        stop = {
+          modes = { n = "q" },
+          index = 4,
+          callback = "keymaps.stop",
+          description = "Stop request",
+        },
       },
       variables = {
         ["buffer"] = {
@@ -1308,9 +1318,9 @@ You must create or modify a workspace file through a series of prompts over mult
         buffer_watch = "󰂥 ",
         --chat_context = " ",
         chat_fold = " ",
-        tool_pending = " ",
-        tool_in_progress = " ",
-        tool_failure = " ",
+        tool_pending = "  ",
+        tool_in_progress = "  ",
+        tool_failure = "  ",
         tool_success = "  ",
       },
       -- Window options for the chat buffer
