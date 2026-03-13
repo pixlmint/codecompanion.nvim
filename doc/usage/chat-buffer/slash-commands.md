@@ -21,6 +21,10 @@ Slash Commands enable you to quickly add context to the chat buffer. They are co
 
 The _buffer_ slash command enables you to add the contents of any open buffers in Neovim to the chat buffer. The command has native, _Telescope_, _mini.pick_, _fzf.lua_ and _snacks.nvim_ providers available. Also, multiple buffers can be selected and added to the chat buffer as per the video above.
 
+## /command
+
+The _command_ slash command is specific to [ACP](/configuration/adapters-acp) adapters and allows users to switch between different adapter commands. For instance, some ACP adapters may allow you to run the agent command with a specific flag. Be mindful that switching commands is destructive and essentially resets the chat buffer for the purposes of a conversation with an agent.
+
 ## /compact
 
 The _compact_ slash command, based on [Claude Code's](https://code.claude.com/docs/en/slash-commands#built-in-slash-commands) corresponding feature, clears the chat buffer's message history whilst preserving a summary, in context.
@@ -59,20 +63,17 @@ The _image_ slash command allows you to add images into a chat buffer via remote
 
 The _rules_ slash command allows you to add [rules](/usage/chat-buffer/rules) groups to the chat buffer.
 
+## /mcp
+
+The _mcp_ slash command allows you to start and stop [Model Context Protocol (MCP)](/configuration/mcp) servers manually from within a chat buffer. This is applied at a global level, so starting/stopping servers in one chat buffer will affect all other chat buffers. A _snacks.nvim_ and `vim.ui.select` provider is available for selecting which MCP servers to start/stop.
+
 ## /mode
 
-The _mode_ slash command is specific to [ACP](/configuration/adapters-acp) adapters allows users to switch between different agent operating modes, as per the [protocol](https://agentclientprotocol.com/protocol/session-modes) docs.
+The _mode_ slash command is specific to [ACP](/configuration/adapters-acp) adapters and allows users to switch between different agent operating modes, as per the [protocol](https://agentclientprotocol.com/protocol/session-modes) docs.
 
 ## /now
 
 The _now_ slash command simply inserts the current datetime stamp into the chat buffer.
-
-## /quickfix
-
-The `quickfix` slash command adds entries from the Neovim quickfix list to the chat buffer.
-
-- For search patterns or file entries, the whole file is shared.
-- For diagnostics, the context of the function/method/class is shared if possible; otherwise, 10 lines around the diagnostic are included.
 
 ## /symbols
 
@@ -84,7 +85,4 @@ The _symbols_ slash command uses Tree-sitter to create a symbolic outline of a f
 
 The command has native, _Telescope_, _mini.pick_, _fzf.lua_ and _snacks.nvim_ providers available. Also, multiple symbols can be selected and added to the chat buffer.
 
-## /terminal
-
-The _terminal_ slash command shares the latest output from the last terminal buffer with the chat buffer. This can be useful for sharing the outputs of test runs with your LLM.
 

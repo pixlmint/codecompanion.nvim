@@ -57,6 +57,7 @@ T["Anthropic adapter"]["form_messages"]["regular chat"] = function()
   }
 
   h.eq({
+    cache_control = { type = "ephemeral" },
     messages = {
       {
         content = {
@@ -277,7 +278,7 @@ T["Anthropic adapter"]["form_messages"]["with tools and consecutive tool results
     },
   }
 
-  h.eq({ messages = output }, adapter.handlers.form_messages(adapter, input))
+  h.eq({ cache_control = { type = "ephemeral" }, messages = output }, adapter.handlers.form_messages(adapter, input))
 end
 
 T["Anthropic adapter"]["form_messages"]["handles tool results correctly"] = function()
@@ -384,6 +385,51 @@ T["Anthropic adapter"]["form_messages"]["consolidates consecutive user messages 
   }, adapter.handlers.form_messages(adapter, messages).messages)
 end
 
+T["Anthropic adapter"]["form_messages"]["handles empty messages without errors"] = function()
+  local messages_with_empty_content = {
+    { content = "", role = "user" },
+    { content = "Valid message", role = "user" },
+    { content = "", role = "assistant" },
+    { content = "", role = "system" },
+  }
+
+  local result = adapter.handlers.form_messages(adapter, messages_with_empty_content)
+
+  h.eq(#result.messages, 2)
+  h.eq(result.messages[1].role, "user")
+  h.eq(result.messages[1].content[1].text, "<prompt></prompt>")
+  h.eq(result.messages[1].content[2].text, "Valid message")
+  h.eq(result.messages[2].role, "assistant")
+end
+
+T["Anthropic adapter"]["form_messages"]["filters out empty system messages"] = function()
+  local messages_with_empty_system = {
+    { content = "", role = "system" },
+    { content = "Valid system message", role = "system" },
+    { content = "User message", role = "user" },
+  }
+
+  local result = adapter.handlers.form_messages(adapter, messages_with_empty_system)
+
+  h.eq(#result.system, 1)
+  h.eq(result.system[1].text, "Valid system message")
+  h.eq(#result.messages, 1)
+  h.eq(result.messages[1].content[1].text, "User message")
+end
+
+T["Anthropic adapter"]["form_messages"]["handles all empty messages"] = function()
+  local all_empty_messages = {
+    { content = "", role = "user" },
+    { content = "", role = "system" },
+  }
+
+  local result = adapter.handlers.form_messages(adapter, all_empty_messages)
+
+  h.eq(result.system, nil)
+  h.eq(result.messages[1].role, "user")
+  h.eq(result.messages[1].content[1].text, "<prompt></prompt>")
+end
+
 T["Anthropic adapter"]["form_messages"]["can handle reasoning"] = function()
   local messages = {
     {
@@ -428,7 +474,7 @@ T["Anthropic adapter"]["form_messages"]["can handle reasoning"] = function()
     },
   }
 
-  h.eq({ messages = expected }, result)
+  h.eq({ cache_control = { type = "ephemeral" }, messages = expected }, result)
 end
 
 T["Anthropic adapter"]["form_messages"]["tool use AND reasoning"] = function()
@@ -494,7 +540,7 @@ T["Anthropic adapter"]["form_messages"]["tool use AND reasoning"] = function()
     },
   }
 
-  h.eq({ messages = expected }, result)
+  h.eq({ cache_control = { type = "ephemeral" }, messages = expected }, result)
 end
 
 T["Anthropic adapter"]["form_reasoning"] = function()

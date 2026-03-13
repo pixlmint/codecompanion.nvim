@@ -84,9 +84,9 @@ function Debug:render()
   local adapter = vim.deepcopy(self.chat.adapter)
   self.adapter = adapter
 
-  local bufname
+  local buf_info
   if _G.codecompanion_current_context and api.nvim_buf_is_valid(_G.codecompanion_current_context) then
-    bufname = buf_utils.name_from_bufnr(_G.codecompanion_current_context)
+    buf_info = buf_utils.get_info(_G.codecompanion_current_context)
   end
 
   -- Get the current settings from the chat buffer rather than making new ones
@@ -112,8 +112,31 @@ function Debug:render()
     end
     table.insert(lines, '-- With Command: "' .. table.concat(command, " ") .. '"')
 
-    -- Show current mode if available
     if self.chat.acp_connection then
+      -- Show current model if available
+      local acp_models = self.chat.acp_connection:get_models()
+      if acp_models and acp_models.currentModelId then
+        local model = acp_models.currentModelId
+        for _, m in ipairs(acp_models or {}) do
+          if m.modelId == acp_models.currentModelId then
+            model = m.name .. " (" .. m.modelId .. ")"
+            break
+          end
+        end
+        local models_list = vim
+          .iter(acp_models.availableModels)
+          :map(function(m)
+            return m.modelId
+          end)
+          :totable()
+        table.sort(models_list)
+        table.insert(
+          lines,
+          '-- Using Model: "' .. model .. '" (Available models: ' .. table.concat(models_list, ", ") .. ")"
+        )
+      end
+
+      -- Show current mode if available
       local modes = self.chat.acp_connection:get_modes()
       if modes and modes.currentModeId then
         local mode_name = modes.currentModeId
@@ -128,8 +151,22 @@ function Debug:render()
     end
   end
   table.insert(lines, "-- Buffer Number: " .. self.chat.bufnr)
-  if bufname then
-    table.insert(lines, '-- Following Buffer: "' .. bufname .. '" (' .. _G.codecompanion_current_context .. ")")
+  if buf_info then
+    table.insert(
+      lines,
+      string.format([[-- Following Buffer: "%s" (%s)]], buf_info.relative_path, _G.codecompanion_current_context)
+    )
+  end
+
+  -- Add MCP status
+  local mcp_status = require("codecompanion.mcp").get_status()
+  if vim.tbl_count(mcp_status) > 0 then
+    table.insert(lines, "")
+    table.insert(lines, "-- MCP Servers:")
+    for server, status in pairs(mcp_status) do
+      local is_ready = status.ready and " " or "○ "
+      table.insert(lines, string.format("-- %s%s (tools: %d)", is_ready, server, status.tool_count))
+    end
   end
 
   -- Add settings
@@ -267,15 +304,14 @@ function Debug:render()
     })
     :set()
 
-  local window_config = config.display.chat.floating_window
-
-  ui_utils.create_float(lines, {
-    bufnr = self.bufnr,
-    filetype = "lua",
-    opts = window_config.opts,
-    title = "Debug Chat",
-    window = window_config,
-  })
+  ui_utils.create_float(
+    lines,
+    vim.tbl_extend("force", config.display.chat.floating_window, {
+      bufnr = self.bufnr,
+      ft = "lua",
+      title = "Debug Chat",
+    })
+  )
 
   self:setup_window()
 

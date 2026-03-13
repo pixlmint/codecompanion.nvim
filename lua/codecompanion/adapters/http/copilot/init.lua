@@ -3,6 +3,7 @@ local get_models = require("codecompanion.adapters.http.copilot.get_models")
 local log = require("codecompanion.utils.log")
 local stats = require("codecompanion.adapters.http.copilot.stats")
 local token = require("codecompanion.adapters.http.copilot.token")
+local tokens = require("codecompanion.utils.tokens")
 
 local _fetching_models = false
 local version = vim.version()
@@ -138,6 +139,14 @@ return {
     ---@param self CodeCompanion.HTTPAdapter
     ---@return boolean
     setup = function(self)
+      -- Ensure models are fetched synchronously before checking capabilities
+      -- This prevents features from being disabled due to missing model info
+      local fetched_token = token.fetch({ force = true })
+      if fetched_token and fetched_token.copilot_token then
+        -- Force synchronous model fetch to ensure we have model capabilities
+        get_models.choices(self, { token = fetched_token, async = false })
+      end
+
       local model_opts = resolve_model_opts(self)
 
       if (self.opts and self.opts.stream) and (model_opts and model_opts.opts and model_opts.opts.can_stream) then
@@ -173,6 +182,14 @@ return {
         -- NOTE: The inclusion of this header reduces premium token usage when
         -- sending tool output back to the LLM (#1717)
         self.headers["X-Initiator"] = "agent"
+      end
+
+      -- Capture estimated token counts before OpenAI strips _meta
+      local est_tokens = {}
+      for _, m in ipairs(messages) do
+        if m._meta and m._meta.estimated_tokens and type(m.content) == "string" then
+          est_tokens[m.content] = m._meta.estimated_tokens
+        end
       end
 
       local result = handlers(self).form_messages(self, messages)
@@ -212,6 +229,29 @@ return {
           i = i + 1
         end
         result.messages = merged
+      end
+
+      -- Add copilot_cache_control to the top 4 messages by estimated token count.
+      -- Uses pre-computed _meta.estimated_tokens from the chat interaction,
+      -- falling back to on-the-fly calculation for messages without estimates
+      if result.messages and #result.messages > 0 then
+        local scored = {}
+        for i, m in ipairs(result.messages) do
+          local est = type(m.content) == "string" and est_tokens[m.content] or nil
+          if not est and type(m.content) == "string" then
+            est = tokens.calculate(m.content)
+          end
+          table.insert(scored, { index = i, tokens = est or 0 })
+        end
+
+        table.sort(scored, function(a, b)
+          return a.tokens > b.tokens
+        end)
+
+        -- Copilot limits us to 4 cache points at most
+        for j = 1, math.min(4, #scored) do
+          result.messages[scored[j].index].copilot_cache_control = { type = "ephemeral" }
+        end
       end
 
       return result

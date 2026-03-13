@@ -1,6 +1,58 @@
 local adapter_utils = require("codecompanion.utils.adapters")
 local openai = require("codecompanion.adapters.http.openai")
 
+---Fix Gemini's bug where it concatenates multiple tool call arguments
+---Ref: #2620
+---@param tool_call table The tool call object to fix
+---@return nil
+local function fix_concatenated_tools(tool_call)
+  if not (tool_call["function"] and tool_call["function"]["arguments"]) then
+    return
+  end
+
+  local args = tool_call["function"]["arguments"]
+  if type(args) ~= "string" then
+    return
+  end
+
+  local ok = pcall(vim.json.decode, args)
+  if ok then
+    return
+  end
+
+  -- Extract the first complete JSON node by finding balanced braces
+  local depth = 0
+  local escaped = false
+  local in_string = false
+  local node_end = nil
+
+  for i = 1, #args do
+    local char = args:sub(i, i)
+
+    if escaped then
+      escaped = false
+    elseif char == "\\" and in_string then
+      escaped = true
+    elseif char == '"' then
+      in_string = not in_string
+    elseif not in_string then
+      if char == "{" then
+        depth = depth + 1
+      elseif char == "}" then
+        depth = depth - 1
+        if depth == 0 then
+          node_end = i
+          break
+        end
+      end
+    end
+  end
+
+  if node_end and node_end < #args then
+    tool_call["function"]["arguments"] = args:sub(1, node_end)
+  end
+end
+
 ---@class CodeCompanion.HTTPAdapter.Gemini : CodeCompanion.HTTPAdapter
 return {
   name = "gemini",
@@ -94,12 +146,26 @@ return {
             end
           end
         end
+
+        if msg.tool_calls then
+          for _, tool_call in ipairs(msg.tool_calls) do
+            fix_concatenated_tools(tool_call)
+          end
+        end
       end
 
       return result
     end,
     chat_output = function(self, data, tools)
-      return openai.handlers.chat_output(self, data, tools)
+      local result = openai.handlers.chat_output(self, data, tools)
+
+      if self.opts.tools and tools and #tools > 0 then
+        for _, tool in ipairs(tools) do
+          fix_concatenated_tools(tool)
+        end
+      end
+
+      return result
     end,
     tools = {
       format_tool_calls = function(self, tools)
@@ -123,9 +189,12 @@ return {
       mapping = "parameters",
       type = "enum",
       desc = "The model that will complete your prompt. See https://ai.google.dev/gemini-api/docs/models/gemini#model-variations for additional details and options.",
-      default = "gemini-3-pro-preview",
+      default = "gemini-3.1-pro-preview",
       choices = {
-        ["gemini-3-pro-preview"] = { formatted_name = "Gemini 3 Pro", opts = { can_reason = true, has_vision = true } },
+        ["gemini-3.1-pro-preview"] = {
+          formatted_name = "Gemini 3.1 Pro",
+          opts = { can_reason = true, has_vision = true },
+        },
         ["gemini-3-flash-preview"] = {
           formatted_name = "Gemini 3 Flash",
           opts = { can_reason = true, has_vision = true },

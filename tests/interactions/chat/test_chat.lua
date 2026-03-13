@@ -30,21 +30,21 @@ T["Chat"]["system prompt is added first"] = function()
   h.eq("default system prompt", messages[1].content)
 end
 
-T["Chat"]["buffer variables are handled"] = function()
+T["Chat"]["buffer editor context is handled"] = function()
   -- Execute all the complex operations in the child process
   child.lua([[
     -- Get the existing chat object
     local chat = _G.chat
 
-    -- Add a new message with a variable context
+    -- Add a new message with editor_context
     table.insert(chat.messages, { role = "user", content = "#{foo} what does this file do?" })
 
     -- Get the message we just added
     local message = chat.messages[#chat.messages]
 
-    -- Parse and replace variables in the message
-    if chat.variables:parse(chat, message) then
-      message.content = chat.variables:replace(message.content, chat.buffer_context.bufnr)
+    -- Parse and replace editor context in the message
+    if chat.editor_context:parse(chat, message) then
+      message.content = chat.editor_context:replace(message.content, chat.buffer_context.bufnr)
     end
 
     -- Extract the properties we need to test into simple data types
@@ -61,7 +61,7 @@ T["Chat"]["buffer variables are handled"] = function()
   -- Make assertions on the retrieved values
   h.eq("foo", last_message_content)
   h.eq(false, last_message_visible)
-  h.eq("variable", last_message_tag)
+  h.eq("editor_context", last_message_tag)
 end
 
 T["Chat"]["system prompt can be ignored"] = function()
@@ -77,6 +77,56 @@ end
 T["Chat"]["chat buffer is initialized"] = function()
   child.lua([[require("codecompanion").chat()]])
   expect.reference_screenshot(child.get_screenshot())
+end
+
+T["Chat"]["cursor is placed after last character when prompt library has non-empty user prompt"] = function()
+  local child_test = MiniTest.new_child_neovim()
+  h.child_start(child_test)
+
+  local result = child_test.lua([[
+    h = require('tests.helpers')
+    codecompanion = h.setup_plugin()
+    codecompanion.setup({
+      prompt_library = {
+        ["Test Cursor"] = {
+          strategy = "chat",
+          description = "Test cursor position",
+          opts = {
+            alias = "test_cursor",
+            auto_submit = false,
+          },
+          prompts = {
+            {
+              role = "user",
+              content = "Test",
+            },
+          },
+        },
+      },
+    })
+    codecompanion.prompt("test_cursor")
+    local bufnr = vim.api.nvim_get_current_buf()
+    -- Get the last line of the buffer
+    local line_count = vim.api.nvim_buf_line_count(bufnr)
+    local last_line = vim.api.nvim_buf_get_lines(bufnr, line_count - 1, line_count, false)[1]
+    -- Get cursor position
+    local cursor = vim.api.nvim_win_get_cursor(0)
+    return {
+      last_line = last_line,
+      cursor_row = cursor[1],
+      cursor_col = cursor[2],
+      line_count = line_count,
+    }
+  ]])
+
+  child_test.stop()
+
+  -- The last line should be empty (buffer ends with a blank line)
+  h.eq("", result.last_line)
+  -- The cursor should be on the last line
+  h.eq(result.line_count, result.cursor_row)
+  -- The cursor column should be 0 (start of empty line)
+  h.eq(0, result.cursor_col)
 end
 
 T["Chat"]["loading from the prompt library sets the correct header_line"] = function()
@@ -144,6 +194,7 @@ T["Chat"]["images are replaced in text and base64 encoded"] = function()
 
   h.eq({
     cycle = 1,
+    estimated_tokens = message._meta.estimated_tokens,
     index = message._meta.index,
     id = message._meta.id,
     tag = "image",
@@ -164,11 +215,8 @@ end
 
 T["Chat"]["can bring up keymap options in the chat buffer"] = function()
   child.lua([[
-    -- Open the chat buffer
     require("codecompanion").chat()
-
-    -- Ensure we're in normal mode
-    vim.cmd("stopinsert")
+    vim.cmd("stopinsert") -- Ensure we're in normal mode
   ]])
 
   child.type_keys("?")
@@ -275,6 +323,125 @@ T["Chat"]["ftplugin window options override plugin defaults"] = function()
   ]])
 
   child_test.stop()
+end
+
+T["Chat"]["can create hidden chat without opening window"] = function()
+  local result = child.lua([[
+    local visible_chat = codecompanion.chat({})
+    local last_chat_initial = codecompanion.last_chat()
+
+    local hidden_chat = codecompanion.chat({
+      hidden = true,
+      messages = {
+        { role = "user", content = "Test hidden chat" }
+      }
+    })
+
+    local last_chat_final = codecompanion.last_chat()
+    local line_count = vim.api.nvim_buf_line_count(hidden_chat.bufnr)
+    local cwd_ok, cwd_ctx = pcall(function() return hidden_chat:make_system_prompt_context() end)
+
+    return {
+      visible_id = visible_chat.id,
+      last_initial_id = last_chat_initial.id,
+      hidden_id = hidden_chat.id,
+      last_final_id = last_chat_final.id,
+      hidden = hidden_chat.hidden,
+      bufnr_valid = vim.api.nvim_buf_is_valid(hidden_chat.bufnr),
+      is_visible = hidden_chat.ui:is_visible(),
+      line_count = line_count,
+      buffer_has_content = line_count > 0,
+      cwd_works = cwd_ok,
+      cwd_value = cwd_ok and cwd_ctx.cwd or nil
+    }
+  ]])
+
+  h.eq(true, result.hidden)
+  h.eq(true, result.bufnr_valid)
+  h.eq(false, result.is_visible == true)
+  h.eq(true, result.line_count > 0)
+  h.eq(true, result.cwd_works)
+  h.eq(true, result.cwd_value ~= nil and result.cwd_value ~= "")
+  h.eq(result.visible_id, result.last_initial_id)
+  h.eq(false, result.hidden_id == result.last_final_id)
+  h.eq(result.visible_id, result.last_final_id)
+end
+
+T["Chat"]["on_before_submit callback can prevent submission"] = function()
+  local result = child.lua([[
+    local chat = _G.chat
+    local message_count_before = #chat.messages
+
+    chat:add_callback("on_before_submit", function(c, info)
+      return false
+    end)
+
+    chat:add_buf_message({
+      role = "user",
+      content = "This should not be submitted",
+    })
+    chat:submit()
+
+    return {
+      message_count_before = message_count_before,
+      message_count_after = #chat.messages,
+      no_request = chat.current_request == nil,
+      status = chat.status,
+    }
+  ]])
+
+  -- Messages should be unchanged (no user message added to the stack)
+  h.eq(result.message_count_before, result.message_count_after)
+
+  -- Status is rest
+  h.eq("", result.status)
+end
+
+T["Chat"]["on_before_submit allows submission when not returning false"] = function()
+  local result = child.lua([[
+    local chat = _G.chat
+    local message_count_before = #chat.messages
+
+    chat:add_callback("on_before_submit", function(c, info)
+      -- returning nil
+    end)
+
+    chat:add_buf_message({
+      role = "user",
+      content = "This should be submitted",
+    })
+    chat:submit()
+
+    return {
+      message_count_before = message_count_before,
+      message_count_after = #chat.messages,
+    }
+  ]])
+
+  -- A user message should have been added to the stack
+  h.eq(true, result.message_count_after > result.message_count_before)
+end
+
+T["Chat"]["on_before_submit leaves buffer editable after cancellation"] = function()
+  local result = child.lua([[
+    local chat = _G.chat
+
+    chat:add_callback("on_before_submit", function()
+      return false
+    end)
+
+    chat:add_buf_message({
+      role = "user",
+      content = "Test buffer state",
+    })
+    chat:submit()
+
+    return {
+      modifiable = vim.bo[chat.bufnr].modifiable,
+    }
+  ]])
+
+  h.eq(true, result.modifiable)
 end
 
 return T

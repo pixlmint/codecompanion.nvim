@@ -14,7 +14,7 @@ There are two "types" of adapter in CodeCompanion; **http** adapters which conne
 
 The configuration for both types of adapters is exactly the same, however they sit within their own tables (`adapters.http.*` and `adapters.acp.*`) and have different options available. HTTP adapters use _models_ to allow users to select the specific LLM they'd like to interact with. ACP adapters use _commands_ to allow users to customize their interaction with agents (e.g. enabling _yolo_ mode). As there is a lot of shared functionality between the two adapters, it is recommend that you read this page alongside the ACP one.
 
-## Changing an Adapter
+## Changing the Default Adapter
 
 You can change the default adapter for each interaction as follows:
 
@@ -34,13 +34,13 @@ require("codecompanion").setup({
 }),
 ```
 
-## Changing a Model
+## Changing the Default Model
 
 A core part of working with CodeCompanion is being able to easily switch between adapters and LLMs. Below are two examples of how this can be achieved.
 
 ::: code-group
 
-```lua [For Interactions]
+```lua [For Interactions] {4-7}
 require("codecompanion").setup({
   interactions = {
     chat = {
@@ -53,7 +53,7 @@ require("codecompanion").setup({
 }),
 ```
 
-```lua [For Adapters]
+```lua [For Adapters] {6-10}
 require("codecompanion").setup({
   adapters = {
     http = {
@@ -362,7 +362,13 @@ require("codecompanion").setup({
 
 ### Ollama (remotely)
 
-To use Ollama remotely, change the URL in the env table, set an API key and pass it via an "Authorization" header:
+The simplest way to connect to a remote Ollama instance is to set the `OLLAMA_HOST` environment variable (the same variable used by the Ollama CLI):
+
+```bash
+export OLLAMA_HOST="http://192.168.1.100:11434"
+```
+
+Alternatively, configure it directly in your setup using `extend()`. If you need authentication, set an API key and pass it via an "Authorization" header:
 
 ```lua
 require("codecompanion").setup({
@@ -430,9 +436,12 @@ By default, CodeCompanion sets `store = false` to ensure that state isn't [store
 
 Thanks to the community for building the following adapters:
 
-- [Venice.ai](https://github.com/olimorris/codecompanion.nvim/discussions/972)
-- [Fireworks.ai](https://github.com/olimorris/codecompanion.nvim/discussions/693)
-- [OpenRouter](https://github.com/olimorris/codecompanion.nvim/discussions/1013)
 - [DashScope](https://github.com/olimorris/codecompanion.nvim/discussions/2239)
+- [Fireworks.ai](https://github.com/olimorris/codecompanion.nvim/discussions/693)
+- [InceptionLabs - Mercury 2](https://github.com/olimorris/codecompanion.nvim/discussions/2867)
+- [Nvidia NIM](https://github.com/olimorris/codecompanion.nvim/discussions/2810)
+- [OpenRouter](https://github.com/olimorris/codecompanion.nvim/discussions/1013)
+- [Venice.ai](https://github.com/olimorris/codecompanion.nvim/discussions/972)
+- [Vertex AI](https://github.com/viespejo/cc-adapter-vertex-ai.nvim)
 
 The section of the discussion forums which is dedicated to user created adapters can be found [here](https://github.com/olimorris/codecompanion.nvim/discussions?discussions_q=is%3Aopen+label%3A%22tip%3A+adapter%22). Use these individual threads as a place to raise issues and ask questions about your specific adapters.

@@ -6,11 +6,12 @@ local T = new_set()
 local child = MiniTest.new_child_neovim()
 T = new_set({
   hooks = {
-    pre_case = function()
+    pre_once = function()
       h.child_start(child)
+      child.lua([[h = require('tests.helpers')]])
+    end,
+    pre_case = function()
       child.lua([[
-        h = require('tests.helpers')
-
         -- Mock ACP connection for chat integration tests
         _G.mock_acp_connection = {
           connected = false,
@@ -87,6 +88,16 @@ T = new_set({
       child.lua([[
         _G.mock_acp_connection = nil
         _G.last_prompt_request = nil
+        _G.last_permission_request = nil
+        _G.codecompanion_chat_metadata = nil
+
+        -- Reset modules that tests may have overridden
+        package.loaded["codecompanion.acp"] = nil
+        package.loaded["codecompanion.interactions.chat.acp.request_permission"] = nil
+        package.loaded["codecompanion.interactions.chat.acp.handler"] = nil
+        package.loaded["codecompanion.interactions.chat.acp.commands"] = nil
+        package.loaded["codecompanion.interactions.chat"] = nil
+        package.loaded["codecompanion.config"] = nil
       ]])
     end,
     post_once = child.stop,
@@ -214,6 +225,44 @@ T["ACPHandler"]["handles thought chunks"] = function()
   h.eq(2, result.message_count)
   h.eq("Let me think about this...", result.first_content)
   h.eq("reasoning_message", result.message_type)
+  h.eq(2, result.reasoning_collected)
+end
+
+T["ACPHandler"]["suppresses thought chunks when show_reasoning is false"] = function()
+  local result = child.lua([[
+    local chat = h.setup_chat_buffer({
+      display = {
+        chat = {
+          show_reasoning = false
+        }
+      }
+    }, {
+      name = "test_acp",
+      config = {
+        name = "test_acp",
+        type = "acp",
+        handlers = { form_messages = function(a, m) return m end }
+      }
+    })
+
+    local ACPHandler = require("codecompanion.interactions.chat.acp.handler")
+    local handler = ACPHandler.new(chat)
+
+    local buffer_messages = {}
+    chat.add_buf_message = function(self, data, opts)
+      table.insert(buffer_messages, { data = data, opts = opts })
+    end
+
+    handler:handle_thought_chunk("Let me think about this...")
+    handler:handle_thought_chunk("I need to consider...")
+
+    return {
+      message_count = #buffer_messages,
+      reasoning_collected = #handler.reasoning
+    }
+  ]])
+
+  h.eq(0, result.message_count)
   h.eq(2, result.reasoning_collected)
 end
 
@@ -380,7 +429,7 @@ T["ACPHandler"]["hydrates permission request with cached diff tool_call"] = func
     -- Stub the permission UI to capture the request
     _G.last_permission_request = nil
     package.loaded["codecompanion.interactions.chat.acp.request_permission"] = {
-      show = function(chat_arg, request)
+      confirm = function(chat_arg, request)
         _G.last_permission_request = request
       end
     }
@@ -426,7 +475,7 @@ T["ACPHandler"]["permission request passes through when toolCallId unknown"] = f
     -- Stub the permission UI to capture the request
     _G.last_permission_request = nil
     package.loaded["codecompanion.interactions.chat.acp.request_permission"] = {
-      show = function(chat_arg, request)
+      confirm = function(chat_arg, request)
         _G.last_permission_request = request
       end
     }

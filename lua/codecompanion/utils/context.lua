@@ -116,10 +116,15 @@ function M.get(bufnr, args)
     lines, start_line, start_col, end_line, end_col = M.get_visual_selection(bufnr)
   end
 
+  local user_prompt = ""
+  if args and args.user_prompt then
+    user_prompt = args.user_prompt
+  end
+
   return {
     bufnr = bufnr,
     buftype = api.nvim_get_option_value("buftype", { buf = bufnr }) or "",
-    code = vim.tbl_count(lines) > 0 and vim.pesc(table.concat(lines, "\n")),
+    code = vim.tbl_count(lines) > 0 and table.concat(lines, "\n"),
     cursor_pos = cursor_pos,
     end_col = end_col,
     end_line = end_line,
@@ -133,6 +138,7 @@ function M.get(bufnr, args)
     start_col = start_col,
     start_line = start_line,
     winnr = winnr,
+    user_prompt = user_prompt,
   }
 end
 

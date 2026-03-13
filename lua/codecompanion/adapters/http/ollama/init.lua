@@ -22,8 +22,13 @@ return {
     tokens = true,
   },
   url = "${url}/api/chat",
+  headers = {
+    ["Content-Type"] = "application/json",
+  },
   env = {
-    url = "http://localhost:11434",
+    url = function()
+      return os.getenv("OLLAMA_HOST") or "http://localhost:11434"
+    end,
   },
   handlers = {
     setup = function(self)

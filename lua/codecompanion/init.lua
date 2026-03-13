@@ -4,6 +4,8 @@ local log = require("codecompanion.utils.log")
 
 local api = vim.api
 
+local _version
+
 -- Lazy load context_utils
 local context_utils
 local function get_context(bufnr, args)
@@ -35,7 +37,10 @@ end
 ---@return nil
 CodeCompanion.inline = function(args)
   local context = get_context(api.nvim_get_current_buf(), args)
-  return require("codecompanion.interactions.inline").new({ buffer_context = context }):prompt(args.args)
+  local inline = require("codecompanion.interactions.inline").new({ buffer_context = context })
+  if inline then
+    inline:prompt(args.args)
+  end
 end
 
 ---Accept the next word of code completion
@@ -87,7 +92,7 @@ CodeCompanion.add = function(args)
   local chat = CodeCompanion.last_chat()
 
   if not chat then
-    chat = CodeCompanion.chat({ context = {} })
+    chat = CodeCompanion.chat()
 
     if not chat then
       return log:warn("Could not create chat buffer")
@@ -113,6 +118,7 @@ end
 CodeCompanion.chat = function(args)
   args = args or {}
 
+  local acp_command
   local adapter
   local messages = args.messages or {}
   local context = args.context or get_context(api.nvim_get_current_buf(), args)
@@ -124,6 +130,9 @@ CodeCompanion.chat = function(args)
     adapter = require("codecompanion.adapters").resolve(adapter)
     if args.params.model then
       adapter.schema.model.default = args.params.model
+    end
+    if adapter.type == "acp" and args.params.command then
+      acp_command = args.params.command
     end
   end
 
@@ -158,10 +167,12 @@ CodeCompanion.chat = function(args)
   end
 
   return require("codecompanion.interactions.chat").new({
+    acp_command = acp_command,
     adapter = adapter,
     auto_submit = auto_submit,
     buffer_context = context,
     callbacks = args.callbacks,
+    hidden = args.hidden,
     messages = has_messages and messages or nil,
     window_opts = args and args.window_opts,
   })
@@ -180,35 +191,37 @@ end
 CodeCompanion.cmd = function(args)
   local context = get_context(api.nvim_get_current_buf(), args)
 
-  return require("codecompanion.interactions.cmd")
-    .new({
-      buffer_context = context,
-      prompts = {
-        {
-          role = config.constants.SYSTEM_ROLE,
-          content = string.format(
-            [[Some additional context which **may** be useful:
+  local command = require("codecompanion.interactions.cmd").new({
+    buffer_context = context,
+    prompts = {
+      {
+        role = config.constants.SYSTEM_ROLE,
+        content = string.format(
+          [[Some additional context which **may** be useful:
 
 - The user is currently working in a %s file
 - It has %d lines
 - The user is currently on line %d
 - The file's full path is %s]],
-            context.filetype,
-            context.line_count,
-            context.cursor_pos[1],
-            context.filename
-          ),
-          opts = {
-            visible = false,
-          },
-        },
-        {
-          role = config.constants.USER_ROLE,
-          content = args.args,
+          context.filetype,
+          context.line_count,
+          context.cursor_pos[1],
+          context.filename
+        ),
+        opts = {
+          visible = false,
         },
       },
-    })
-    :start(args)
+      {
+        role = config.constants.USER_ROLE,
+        content = args.args,
+      },
+    },
+  })
+
+  if command then
+    command:start(args)
+  end
 end
 
 ---Toggle the chat buffer
@@ -231,9 +244,16 @@ CodeCompanion.toggle = function(args)
     return CodeCompanion.chat(chat_opts)
   end
 
-  -- If the chat is visible in a different tab, just hide it there
+  -- If the chat is visible in a different tab ...
   if chat.ui:is_visible_non_curtab() then
-    chat.ui:hide()
+    if config.display.chat.window.layout == "tab" then
+      -- ... open it (go there) if chat opens in tabs
+      chat.ui:open()
+      return
+    else
+      -- ... or close it so we can open it below
+      chat.ui:hide()
+    end
   -- If the chat is visible in the current tab, hide it and return early
   elseif chat.ui:is_visible() then
     return chat.ui:hide()
@@ -332,17 +352,44 @@ CodeCompanion.has = function(feature)
   return features
 end
 
+---Output the plugin version
+---@return string|nil
+CodeCompanion.version = function()
+  if _version then
+    return _version
+  end
+
+  local ok, version = pcall(function()
+    return require("codecompanion.utils.files")
+      .read(
+        vim.fs.joinpath(
+          string.sub(debug.getinfo(1).source, 2, string.len("/lua/codecompanion/init.lua") * -1),
+          "version.txt"
+        )
+      )
+      :gsub("%s+", "")
+  end)
+
+  if ok then
+    _version = version
+    return _version
+  end
+
+  return nil
+end
+
 ---Handle adapter configuration merging
 ---@param adapter_type string
 ---@param opts table
 ---@return nil
-local function handle_adapter_config(adapter_type, opts)
+local function adapter_config(adapter_type, opts)
   if opts and opts.adapters and opts.adapters[adapter_type] then
     if config.adapters[adapter_type].opts.show_presets then
       local adapters_util = require("codecompanion.utils.adapters")
       adapters_util.extend(config.adapters[adapter_type], opts.adapters[adapter_type])
     else
-      config.adapters[adapter_type] = vim.deepcopy(opts.adapters[adapter_type])
+      config.adapters[adapter_type] =
+        vim.tbl_deep_extend("keep", opts.adapters[adapter_type], { opts = config.adapters[adapter_type].opts })
     end
   end
 end
@@ -356,8 +403,8 @@ CodeCompanion.setup = function(opts)
   -- Setup the plugin's config
   config.setup(opts)
 
-  handle_adapter_config("acp", opts)
-  handle_adapter_config("http", opts)
+  adapter_config("acp", opts)
+  adapter_config("http", opts)
 
   local cmds = require("codecompanion.commands")
   for _, cmd in ipairs(cmds) do
@@ -374,10 +421,6 @@ CodeCompanion.setup = function(opts)
   -- Set the log root
   log.set_root(log.new({
     handlers = {
-      {
-        type = "echo",
-        level = vim.log.levels.ERROR,
-      },
       {
         type = "notify",
         level = vim.log.levels.WARN,
@@ -401,7 +444,7 @@ CodeCompanion.setup = function(opts)
   end
 
   local window_config = config.display.chat.window
-  if window_config.sticky and (window_config.layout ~= "buffer") then
+  if window_config.sticky and window_config.layout ~= "buffer" and window_config.layout ~= "tab" then
     api.nvim_create_autocmd("TabEnter", {
       group = api.nvim_create_augroup("codecompanion.sticky_buffer", { clear = true }),
       callback = function(args)

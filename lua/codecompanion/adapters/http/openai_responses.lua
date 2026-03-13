@@ -51,9 +51,9 @@ return {
       description = "Allow models to search the web for the latest information before generating a response.",
       enabled = true,
       ---@param self CodeCompanion.HTTPAdapter.OpenAIResponses
-      ---@param tools table The transformed tools table
-      callback = function(self, tools)
-        table.insert(tools, {
+      ---@param meta { tools: table }
+      callback = function(self, meta)
+        table.insert(meta.tools, {
           type = "web_search",
         })
       end,
@@ -181,7 +181,12 @@ return {
                 }
 
                 -- If next message is also from user with text content, combine them
-                if next_msg and next_msg.role == m.role and type(next_msg.content) == "string" then
+                if
+                  next_msg
+                  and next_msg.role == m.role
+                  and type(next_msg.content) == "string"
+                  and not (next_msg._meta and next_msg._meta.tag == "image")
+                then
                   table.insert(combined_content, {
                     type = "input_text",
                     text = next_msg.content,
@@ -252,7 +257,7 @@ return {
           for _, schema in pairs(tool) do
             if schema._meta and schema._meta.adapter_tool then
               if self.available_tools[schema.name] then
-                self.available_tools[schema.name].callback(self, transformed)
+                self.available_tools[schema.name].callback(self, { tools = transformed })
               end
             else
               table.insert(
@@ -463,7 +468,7 @@ return {
         if data and data ~= "" then
           local ok, json = pcall(vim.json.decode, data.body, { luanil = { object = true } })
 
-          if not ok then
+          if not ok or not json.output then
             log:error("Error decoding JSON: %s", data.body)
             return { status = "error", output = json }
           end
