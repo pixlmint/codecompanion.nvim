@@ -189,6 +189,66 @@ T["ACP Connection"]["uses session/load when agent supports it"] = function()
   h.eq(result.session_id, "prev-session")
 end
 
+T["ACP Connection"]["session/load restores modes and models metadata"] = function()
+  local result = child.lua([[
+    local connection = create_init_connection()
+    connection.session_id = "prev-session"
+    function connection:send_rpc_request(method, params)
+      if method == "initialize" then
+        return { protocolVersion = 1, authMethods = {}, agentCapabilities = { loadSession = true } }
+      elseif method == "session/load" then
+        return {
+          modes = { { id = "code", name = "Code" }, { id = "ask", name = "Ask" } },
+          models = { { id = "claude-sonnet", name = "Claude Sonnet" } },
+        }
+      end
+    end
+
+    local ok = connection:connect_and_initialize()
+    return {
+      ok = ok ~= nil,
+      modes = connection._modes,
+      models = connection._models,
+    }
+  ]])
+
+  h.eq(result.ok, true)
+  h.eq(#result.modes, 2)
+  h.eq(result.modes[1].id, "code")
+  h.eq(#result.models, 1)
+  h.eq(result.models[1].id, "claude-sonnet")
+end
+
+T["ACP Connection"]["session/new stores modes and models metadata"] = function()
+  local result = child.lua([[
+    local connection = create_init_connection()
+    function connection:send_rpc_request(method, params)
+      if method == "initialize" then
+        return { protocolVersion = 1, authMethods = {}, agentCapabilities = { loadSession = false } }
+      elseif method == "session/new" then
+        return {
+          sessionId = "new-session",
+          modes = { { id = "agent", name = "Agent" } },
+          models = { { id = "claude-opus", name = "Claude Opus" } },
+        }
+      end
+    end
+
+    local ok = connection:connect_and_initialize()
+    return {
+      ok = ok ~= nil,
+      modes = connection._modes,
+      models = connection._models,
+    }
+  ]])
+
+  h.eq(result.ok, true)
+  h.eq(#result.modes, 1)
+  h.eq(result.modes[1].id, "agent")
+  h.eq(#result.models, 1)
+  h.eq(result.models[1].id, "claude-opus")
+end
+
 T["ACP Connection"]["falls back to session/new if session/load fails"] = function()
   local result = child.lua([[
     local calls = {}
@@ -446,6 +506,37 @@ T["ACP Responses"]["fs/read_text_file rejects invalid sessionId"] = function()
   h.eq(result.error.code, -32602)
 end
 
+T["ACP Responses"]["fs/read_text_file rejects requests without an active session"] = function()
+  local result = child.lua([[
+    local called = false
+    package.loaded["codecompanion.interactions.chat.acp.fs"] = {
+      read_text_file = function(path)
+        called = true
+        return true, "should_not_be_called"
+      end
+    }
+    local connection = create_test_connection()
+    local sent = {}
+    function connection:write_message(data)
+      table.insert(sent, vim.trim(data))
+      return true
+    end
+    local req = vim.json.encode({
+      jsonrpc = "2.0", id = 61, method = "fs/read_text_file",
+      params = { sessionId = "missing-session", path = "/tmp/x" }
+    })
+    connection:buffer_stdout_and_dispatch(req .. "\n")
+    return {
+      called = called,
+      reply = vim.json.decode(sent[#sent]),
+    }
+  ]])
+
+  h.is_false(result.called)
+  h.eq(result.reply.id, 61)
+  h.eq(result.reply.error.code, -32602)
+end
+
 T["ACP Responses"]["fs/write_text_file and responds with null"] = function()
   local result = child.lua([[
     local writes = {}
@@ -531,6 +622,47 @@ T["ACP Responses"]["fs/write_text_file rejects invalid sessionId"] = function()
   -- JSON-RPC error response expected
   h.eq(type(result[1].error), "table")
   h.eq(result[1].error.code, -32602)
+end
+
+T["ACP Responses"]["fs/write_text_file rejects requests without an active session"] = function()
+  local result = child.lua([[
+    local called = false
+    package.loaded["codecompanion.interactions.chat.acp.fs"] = {
+      write_text_file = function(path, content)
+        called = true
+        return true
+      end
+    }
+
+    local connection = create_test_connection()
+
+    local sent = {}
+    function connection:write_message(data)
+      table.insert(sent, vim.trim(data))
+      return true
+    end
+
+    local req = vim.json.encode({
+      jsonrpc = "2.0",
+      id = 71,
+      method = "fs/write_text_file",
+      params = {
+        sessionId = "missing-session",
+        path = "/tmp/cc_write_bad.lua",
+        content = "nope",
+      }
+    })
+    connection:buffer_stdout_and_dispatch(req .. "\n")
+
+    return {
+      called = called,
+      reply = vim.json.decode(sent[#sent]),
+    }
+  ]])
+
+  h.is_false(result.called)
+  h.eq(result.reply.id, 71)
+  h.eq(result.reply.error.code, -32602)
 end
 
 T["ACP Responses"]["fs/write_text_file failure returns JSON-RPC error"] = function()

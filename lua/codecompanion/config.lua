@@ -39,7 +39,10 @@ local defaults = {
       auggie_cli = "auggie_cli",
       cagent = "cagent",
       claude_code = "claude_code",
+      cline_cli = "cline_cli",
       codex = "codex",
+      cursor_cli = "cursor_cli",
+      copilot_acp = "copilot_acp",
       gemini_cli = "gemini_cli",
       goose = "goose",
       kimi_cli = "kimi_cli",
@@ -56,6 +59,14 @@ local defaults = {
   },
   constants = constants,
   interactions = {
+    opts = {
+      date_format = "%A, %d %B %Y", -- The date format to use in system prompts
+
+      watcher = {
+        enabled = true, -- Reload buffers when an agent modifies files on disk
+        debounce = 500, -- Debounce time in milliseconds
+      },
+    },
     -- BACKGROUND INTERACTION -------------------------------------------------
     background = {
       adapter = {
@@ -98,39 +109,29 @@ local defaults = {
             system_prompt = function(group, ctx)
               return string.format(
                 [[<instructions>
-You are an expert AI coding agent, working with a user in Neovim. You have expert-level knowledge across many programming languages, frameworks and software engineering tasks including debugging, implementing features, refactoring code and providing explanations.
-By default, implement changes rather than only suggesting them. When a tool call is intended, make it happen rather than describing it. If the user's intent is unclear, infer the most useful likely action and use tools to discover any missing details instead of guessing.
-If you can infer the project type (languages, frameworks and libraries) from the user's query or the context that you have, keep them in mind when making changes.
-If the user wants you to implement a feature and they have not specified the files to edit, first break down the request into smaller concepts and think about the kinds of files you need to grasp each concept.
-If you aren't sure which tool is relevant, you can call multiple tools. You can call tools repeatedly to take actions or gather as much context as needed until you have completed the task fully. Don't give up unless you are sure the request cannot be fulfilled with the tools you have. It's YOUR RESPONSIBILITY to make sure that you have done all you can to collect necessary context.
-Don't make assumptions about the situation - gather context first, then perform the task or answer the question. Think creatively and explore the workspace in order to make a complete fix.
-Continue working until the user's request is completely resolved before ending your turn. Do not stop when you encounter uncertainty - research or deduce the most reasonable approach and continue.
-After making changes, verify your work by reading the modified files or running relevant commands when appropriate.
-Don't repeat yourself after a tool call, pick up where you left off.
-NEVER print out a codeblock with a terminal command to run unless the user asked for it.
-You don't need to read a file if it's already provided in context.
+You are an automated coding agent with expert-level knowledge across many programming languages and frameworks.
+The user will ask a question or ask you to perform a task. Use the available tools to gather context and take actions.
+If you can infer the project type from the user's query or context, keep it in mind when making changes.
+If the user wants you to implement a feature without specifying files, break the request into smaller concepts and think about the kinds of files you need for each.
+Call multiple tools if you aren't sure which is relevant. Call tools repeatedly until the task is complete — don't give up unless the request truly cannot be fulfilled.
+Gather context first rather than making assumptions. Think creatively and explore the workspace to make a complete fix.
+Don't repeat yourself after a tool call — pick up where you left off.
+Don't print terminal commands in a code block unless the user asked for it.
+You don't need to read a file already provided in context.
 </instructions>
 <toolUseInstructions>
-When using a tool, follow the json schema very carefully and make sure to include ALL required properties.
+Follow the JSON schema carefully and include ALL required properties.
 Always output valid JSON when using a tool.
-If a tool exists to do a task, use the tool instead of asking the user to manually take an action.
-If you say that you will take an action, then go ahead and use the tool to do it. No need to ask permission.
-Never use a tool that does not exist. Use tools using the proper procedure, DO NOT write out a json codeblock with the tool inputs.
-Never say the name of a tool to a user. For example, instead of saying that you'll use the insert_edit_into_file tool, say "I'll edit the file".
-If you think running multiple tools can answer the user's question, prefer calling them in parallel whenever possible.
-When invoking a tool that takes a file path, always use the file path you have been given by the user or by the output of a tool.
+Use tools to take actions rather than asking the user to do it manually.
+If you say you'll take an action, go ahead and do it.
+Never say the name of a tool to a user — e.g. say "I'll edit the file" not "I'll use the insert_edit_into_file tool".
+Prefer calling multiple tools in parallel when possible.
+Use file paths given by the user or by tool output.
 </toolUseInstructions>
 <outputFormatting>
-Keep responses concise. After completing file operations, confirm briefly rather than explaining what was done. Match response length to task complexity.
-Use proper Markdown formatting in your answers. When referring to a filename or symbol in the user's workspace, wrap it in backticks.
-Any code block examples must be wrapped in four backticks with the programming language.
-<example>
-````languageId
-// Your code here
-````
-</example>
-The languageId must be the correct identifier for the programming language, e.g. python, javascript, lua, etc.
-If you are providing code changes, use the insert_edit_into_file tool (if available to you) to make the changes directly instead of printing out a code block with the changes.
+Use proper Markdown formatting. Wrap filenames and symbols in backticks.
+Code block examples must use four backticks with the language ID.
+If you are providing code changes, use the insert_edit_into_file tool (if available) instead of printing a code block.
 </outputFormatting>
 <additionalContext>
 All non-code text responses must be written in the %s language.
@@ -257,6 +258,7 @@ The user is working on a %s machine. Please respond with system specific command
           description = "The memory tool enables LLMs to store and retrieve information across conversations through a memory file directory",
           opts = {
             require_approval_before = true,
+            whitelist = {}, -- e.g. { { path = "/absolute/path", as = "/alias" } }
           },
         },
         ["read_file"] = {
@@ -293,6 +295,8 @@ The user is working on a %s machine. Please respond with system specific command
         opts = {
           auto_submit_errors = true, -- Send any errors to the LLM automatically?
           auto_submit_success = true, -- Send any successful output to the LLM automatically?
+          notify_on_approval = true, -- Notify the user when a tool requires approval?,
+
           folds = {
             enabled = true, -- Fold tool output in the buffer?
             failure_words = { -- Words that indicate an error in the tool output. Used to apply failure highlighting
@@ -356,89 +360,14 @@ If you are providing code changes, use the insert_edit_into_file tool (if availa
           tool_replacement_message = "the ${tool} tool", -- The message to use when replacing tool names in the chat buffer
         },
       },
-      editor_context = {
-        opts = {
-          excluded = {
-            buftypes = {
-              "nofile",
-              "quickfix",
-              "prompt",
-              "popup",
-            },
-            fts = {
-              "codecompanion",
-              "help",
-              "terminal",
-            },
-          },
-        },
-        ["buffer"] = {
-          path = "interactions.chat.editor_context.buffer",
-          description = "Share the current buffer with the LLM",
-          opts = {
-            contains_code = true,
-            default_params = "diff", -- all|diff
-            has_params = true,
-          },
-        },
-        ["buffers"] = {
-          path = "interactions.chat.editor_context.buffers",
-          description = "Share all open buffers with the LLM",
-          opts = {
-            contains_code = true,
-          },
-        },
-        ["diagnostics"] = {
-          path = "interactions.chat.editor_context.diagnostics",
-          description = "Share diagnostics and code for the current buffer",
-          opts = {
-            contains_code = true,
-          },
-        },
-        ["diff"] = {
-          path = "interactions.chat.editor_context.diff",
-          description = "Share the current git diff with the LLM",
-          opts = {
-            contains_code = true,
-          },
-        },
-        ["messages"] = {
-          path = "interactions.chat.editor_context.messages",
-          description = "Share Neovim's message history with the LLM",
-        },
-        ["quickfix"] = {
-          path = "interactions.chat.editor_context.quickfix",
-          description = "Share the quickfix list with the LLM",
-          opts = {
-            contains_code = true,
-          },
-        },
-        ["selection"] = {
-          path = "interactions.chat.editor_context.selection",
-          description = "Share the current visual selection with the LLM",
-          opts = {
-            contains_code = true,
-          },
-        },
-        ["terminal"] = {
-          path = "interactions.chat.editor_context.terminal",
-          description = "Share the latest terminal output with the LLM",
-        },
-        ["viewport"] = {
-          path = "interactions.chat.editor_context.viewport",
-          description = "Share the code that you see in Neovim with the LLM",
-          opts = {
-            contains_code = true,
-          },
-        },
-      },
       slash_commands = {
         ["buffer"] = {
-          path = "interactions.chat.slash_commands.builtin.buffer",
+          path = "interactions.shared.slash_commands.buffer",
           description = "Insert open buffers",
           opts = {
             contains_code = true,
             default_params = "diff", -- all|diff
+            interactions = { "chat", "cli" },
             provider = providers.pickers, -- telescope|fzf_lua|mini_pick|snacks|default
           },
         },
@@ -480,10 +409,11 @@ If you are providing code changes, use the insert_edit_into_file tool (if availa
           },
         },
         ["file"] = {
-          path = "interactions.chat.slash_commands.builtin.file",
+          path = "interactions.shared.slash_commands.file",
           description = "Insert a file",
           opts = {
             contains_code = true,
+            interactions = { "chat", "cli" },
             max_lines = 1000,
             provider = providers.pickers, -- telescope|fzf_lua|mini_pick|snacks|default
           },
@@ -542,6 +472,22 @@ If you are providing code changes, use the insert_edit_into_file tool (if availa
           description = "Insert the current date and time",
           opts = {
             contains_code = false,
+          },
+        },
+        ["resume"] = {
+          path = "interactions.chat.slash_commands.builtin.resume",
+          description = "Resume a previous ACP session",
+          ---@param opts { adapter: CodeCompanion.HTTPAdapter|CodeCompanion.ACPAdapter }
+          ---@return boolean
+          enabled = function(opts)
+            if opts.adapter and opts.adapter.type == "acp" then
+              return true
+            end
+            return false
+          end,
+          opts = {
+            contains_code = false,
+            max_sessions = 500,
           },
         },
         ["rules"] = {
@@ -716,23 +662,6 @@ If you are providing code changes, use the insert_edit_into_file tool (if availa
           callback = "keymaps.copilot_stats",
           description = "[Adapter] Copilot statistics",
         },
-        -- Keymaps for ACP permission requests
-        _acp_allow_always = {
-          modes = { n = "g1" },
-          description = "Allow Always",
-        },
-        _acp_allow_once = {
-          modes = { n = "g2" },
-          description = "Allow Once",
-        },
-        _acp_reject_once = {
-          modes = { n = "g3" },
-          description = "Reject Once",
-        },
-        _acp_reject_always = {
-          modes = { n = "g4" },
-          description = "Reject Always",
-        },
       },
       opts = {
         blank_prompt = "", -- The prompt to use when the user doesn't provide a prompt
@@ -823,8 +752,122 @@ The user is working on a %s machine. Please respond with system specific command
 - Ensure the command is relevant to the user's request]],
       },
     },
-    shared = {
+    -- CLI INTERACTION ---------------------------------------------------------
+    cli = {
+      agents = {},
+      opts = {
+        auto_insert = false, -- Enter insert mode when focusing the CLI terminal
+      },
+      providers = {
+        terminal = {
+          path = "interactions.cli.providers.terminal",
+          description = "Terminal CLI provider",
+        },
+      },
       keymaps = {
+        next_chat = {
+          modes = { n = "}" },
+          callback = "keymaps.next_chat",
+          description = "[Nav] Next interaction",
+        },
+        previous_chat = {
+          modes = { n = "{" },
+          callback = "keymaps.previous_chat",
+          description = "[Nav] Previous interaction",
+        },
+      },
+    },
+    shared = {
+      editor_context = {
+        opts = {
+          excluded = {
+            buftypes = {
+              "nofile",
+              "quickfix",
+              "prompt",
+              "popup",
+            },
+            fts = {
+              "codecompanion",
+              "help",
+              "terminal",
+            },
+          },
+        },
+        ["buffer"] = {
+          path = "interactions.shared.editor_context.buffer",
+          description = "Share the current buffer with the LLM",
+          opts = {
+            contains_code = true,
+            default_params = "diff", -- all|diff
+            has_params = true,
+          },
+        },
+        ["buffers"] = {
+          path = "interactions.shared.editor_context.buffers",
+          description = "Share all open buffers with the LLM",
+          opts = {
+            contains_code = true,
+          },
+        },
+        ["diagnostics"] = {
+          path = "interactions.shared.editor_context.diagnostics",
+          description = "Share diagnostics and code for the current buffer",
+          opts = {
+            contains_code = true,
+          },
+        },
+        ["diff"] = {
+          path = "interactions.shared.editor_context.diff",
+          description = "Share the current git diff with the LLM",
+          opts = {
+            contains_code = true,
+          },
+        },
+        ["messages"] = {
+          path = "interactions.shared.editor_context.messages",
+          description = "Share Neovim's message history with the LLM",
+        },
+        ["quickfix"] = {
+          path = "interactions.shared.editor_context.quickfix",
+          description = "Share the quickfix list with the LLM",
+          opts = {
+            contains_code = true,
+          },
+        },
+        ["selection"] = {
+          path = "interactions.shared.editor_context.selection",
+          description = "Share the current visual selection with the LLM",
+          opts = {
+            contains_code = true,
+          },
+        },
+        ["terminal"] = {
+          path = "interactions.shared.editor_context.terminal",
+          description = "Share the latest terminal output with the LLM",
+        },
+        ["viewport"] = {
+          path = "interactions.shared.editor_context.viewport",
+          description = "Share the code that you see in Neovim with the LLM",
+          opts = {
+            contains_code = true,
+          },
+        },
+        ["this"] = {
+          path = "interactions.shared.editor_context.this",
+          description = "Smart context: visual selection if present, otherwise the current buffer (CLI only)",
+          opts = {
+            contains_code = true,
+            interactions = { "cli" },
+          },
+        },
+      },
+      keymaps = {
+        view_diff = {
+          description = "View the proposed diff",
+          modes = { n = "gv" },
+          opts = { nowait = true },
+        },
         always_accept = {
           callback = "keymaps.always_accept",
           description = "Always accept changes in this buffer",
@@ -845,6 +888,11 @@ The user is working on a %s machine. Please respond with system specific command
           index = 3,
           modes = { n = "g3" },
           opts = { nowait = true, noremap = true },
+        },
+        cancel = {
+          description = "Cancel all pending tool calls",
+          modes = { n = "g4" },
+          opts = { nowait = true },
         },
         next_hunk = {
           callback = "keymaps.next_hunk",
@@ -1052,8 +1100,19 @@ The user is working on a %s machine. Please respond with system specific command
         return " (" .. tokens .. " tokens)"
       end,
     },
+
+    cli = {
+      window = {
+        opts = {
+          list = false, -- listchars render as `.` without this
+        },
+      },
+    },
+
     diff = {
       enabled = true,
+      threshold_for_chat = 6, -- At or below this, always display the diff in the chat buffer
+
       -- Options for any diff windows (extends from floating_window)
       window = {
         opts = {},
@@ -1063,12 +1122,66 @@ The user is working on a %s machine. Please respond with system specific command
         deletions = true,
       },
     },
+
+    icons = {
+      warning = " ",
+    },
+
     inline = {
       -- If the inline prompt creates a new buffer, how should we display this?
       layout = "vertical", -- vertical|horizontal|buffer
     },
-    icons = {
-      warning = " ",
+
+    -- Display options for the input buffer
+    input = {
+      title = "󰅂 CodeCompanion Prompt",
+      window = {
+        border = "single",
+        width = { min = 40, max = 60 },
+        height = { min = 3, max = 5 },
+        relative = "cursor",
+        title_pos = "left",
+        row = 1,
+        col = 0,
+        opts = {
+          number = false,
+          relativenumber = false,
+          signcolumn = "no",
+          foldcolumn = "0",
+          statuscolumn = "",
+
+          breakindent = true,
+          linebreak = true,
+          wrap = true,
+        },
+      },
+      keymaps = {
+        send = {
+          modes = {
+            n = { "<CR>", "<C-s>" },
+            i = "<C-s>",
+          },
+          description = "Send",
+        },
+        close = {
+          modes = { n = { "q", "<Esc>" } },
+          description = "Close",
+        },
+        history_up = {
+          modes = {
+            i = "<Up>",
+            n = "<Up>",
+          },
+          description = "Previous prompt",
+        },
+        history_down = {
+          modes = {
+            i = "<Down>",
+            n = "<Down>",
+          },
+          description = "Next prompt",
+        },
+      },
     },
   },
   -- EXTENSIONS ------------------------------------------------------
@@ -1185,7 +1298,15 @@ M.setup = function(args)
 
   M.config = vim.tbl_deep_extend("force", vim.deepcopy(defaults), args)
 
+  -- TODO: Deprecate in v20.0.0 and remove in v21.0.0
+  if args.interactions and args.interactions.chat and args.interactions.chat.editor_context then
+    M.config.interactions.shared.editor_context =
+      vim.tbl_deep_extend("force", M.config.interactions.shared.editor_context, args.interactions.chat.editor_context)
+    M.config.interactions.chat.editor_context = nil
+  end
+
   M.config.interactions.chat.keymaps = remove_disabled_keymaps(M.config.interactions.chat.keymaps)
+  M.config.interactions.cli.keymaps = remove_disabled_keymaps(M.config.interactions.cli.keymaps)
   M.config.interactions.inline.keymaps = remove_disabled_keymaps(M.config.interactions.inline.keymaps)
   M.config.interactions.shared.keymaps = remove_disabled_keymaps(M.config.interactions.shared.keymaps)
 
