@@ -95,6 +95,7 @@
 ---@field _meta.cycle? number The chat turn cycle when this message was added
 ---@field _meta.index? number The index of the chat message in the messages stack
 ---@field _meta.tag? string A tag to identify special messages (e.g. "system_prompt_from_config", "tool")
+---@field _meta.cumulative_tokens? number Actual cumulative token count from the API when this message was generated
 ---@field _meta.estimated_tokens? number Estimated token count associated with this message
 ---@field context? { id?: string, path?: string, mimetype?: string, url?: string } Optional context object
 ---@field reasoning? CodeCompanion.Chat.Reasoning Optional reasoning object returned by some adapters
@@ -196,12 +197,12 @@
 ---@field SlashCommand CodeCompanion.SlashCommand
 ---@field title string The title of the provider's window
 
----@class CodeCompanion.Actions.Provider
+---@class CodeCompanion.ActionPalette.Provider
 ---@field validate table Validate an item
 ---@field resolve table Resolve an item into an action
 ---@field context table Store all arguments in this table
 
----@class CodeCompanion.Actions.ProvidersArgs Arguments that can be injected into the chat
+---@class CodeCompanion.ActionPalette.ProvidersArgs Arguments that can be injected into the chat
 ---@field validate table Validate an item
 ---@field resolve table Resolve an item into an action
 ---@field context table The buffer context

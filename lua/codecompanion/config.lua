@@ -82,6 +82,12 @@ local defaults = {
             },
             enabled = true,
           },
+          ["on_checkpoint"] = {
+            -- actions = {
+            --   "interactions.background.builtin.compact",
+            -- },
+            enabled = true,
+          },
         },
         opts = {
           enabled = false, -- Enable ALL background chat interactions?
@@ -361,6 +367,21 @@ If you are providing code changes, use the insert_edit_into_file tool (if availa
         },
       },
       slash_commands = {
+        ["acp_session_options"] = {
+          path = "interactions.chat.slash_commands.builtin.acp_session_options",
+          description = "Change ACP session config options like mode and reasoning level",
+          ---@param opts { adapter: CodeCompanion.HTTPAdapter|CodeCompanion.ACPAdapter }
+          ---@return boolean
+          enabled = function(opts)
+            if opts.adapter and opts.adapter.type == "acp" then
+              return true
+            end
+            return false
+          end,
+          opts = {
+            contains_code = false,
+          },
+        },
         ["buffer"] = {
           path = "interactions.shared.slash_commands.buffer",
           description = "Insert open buffers",
@@ -408,6 +429,19 @@ If you are providing code changes, use the insert_edit_into_file tool (if availa
             provider = providers.pickers, -- telescope|fzf_lua|mini_pick|snacks|default
           },
         },
+        ["fork"] = {
+          path = "interactions.chat.slash_commands.builtin.fork",
+          description = "Fork the current chat into a new chat buffer",
+          enabled = function(opts)
+            if opts.adapter and opts.adapter.type == "http" then
+              return true
+            end
+            return false
+          end,
+          opts = {
+            contains_code = false,
+          },
+        },
         ["file"] = {
           path = "interactions.shared.slash_commands.file",
           description = "Insert a file",
@@ -452,21 +486,6 @@ If you are providing code changes, use the insert_edit_into_file tool (if availa
             provider = "default", -- snacks|default
           },
         },
-        ["mode"] = {
-          path = "interactions.chat.slash_commands.builtin.mode",
-          description = "Change the ACP session mode",
-          ---@param opts { adapter: CodeCompanion.HTTPAdapter|CodeCompanion.ACPAdapter }
-          ---@return boolean
-          enabled = function(opts)
-            if opts.adapter and opts.adapter.type == "acp" then
-              return true
-            end
-            return false
-          end,
-          opts = {
-            contains_code = false,
-          },
-        },
         ["now"] = {
           path = "interactions.chat.slash_commands.builtin.now",
           description = "Insert the current date and time",
@@ -491,10 +510,11 @@ If you are providing code changes, use the insert_edit_into_file tool (if availa
           },
         },
         ["rules"] = {
-          path = "interactions.chat.slash_commands.builtin.rules",
-          description = "Insert rules into the chat buffer",
+          path = "interactions.shared.slash_commands.rules",
+          description = "Insert rules",
           opts = {
             contains_code = true,
+            interactions = { "chat", "cli" },
           },
         },
         ["symbols"] = {
@@ -522,7 +542,8 @@ If you are providing code changes, use the insert_edit_into_file tool (if availa
           modes = { i = "<C-_>" },
           index = 1,
           callback = "keymaps.completion",
-          description = "[Chat] Completion menu",
+          description = "Open the completion menu",
+          opts = { chat = { show_in_action_palette = false } },
         },
         send = {
           modes = {
@@ -531,13 +552,13 @@ If you are providing code changes, use the insert_edit_into_file tool (if availa
           },
           index = 2,
           callback = "keymaps.send",
-          description = "[Request] Send response",
+          description = "Send the message to the LLM",
         },
         regenerate = {
           modes = { n = "gr" },
           index = 3,
           callback = "keymaps.regenerate",
-          description = "[Request] Regenerate",
+          description = "Regenerate the last response",
         },
         close = {
           modes = {
@@ -546,124 +567,146 @@ If you are providing code changes, use the insert_edit_into_file tool (if availa
           },
           index = 4,
           callback = "keymaps.close",
-          description = "[Chat] Close",
+          description = "Close the chat buffer",
         },
         stop = {
           modes = { n = "q" },
           index = 5,
           callback = "keymaps.stop",
-          description = "[Request] Stop",
+          description = "Stop the current request",
         },
         clear = {
           modes = { n = "gx" },
           index = 6,
           callback = "keymaps.clear",
-          description = "[Chat] Clear",
+          description = "Clear all messages from the chat",
         },
         codeblock = {
           modes = { n = "gc" },
           index = 7,
           callback = "keymaps.codeblock",
-          description = "[Chat] Insert codeblock",
+          description = "Insert an empty codeblock",
         },
         yank_code = {
           modes = { n = "gy" },
           index = 8,
           callback = "keymaps.yank_code",
-          description = "[Chat] Yank code",
+          description = "Yank code from the last codeblock",
         },
         buffer_sync_all = {
           modes = { n = "gba" },
           index = 9,
           callback = "keymaps.buffer_sync_all",
-          description = "[Chat] Toggle buffer syncing",
+          description = "Toggle live-syncing of pinned buffers",
+          opts = { chat = { show_in_action_palette = false } },
         },
         buffer_sync_diff = {
           modes = { n = "gbd" },
           index = 10,
           callback = "keymaps.buffer_sync_diff",
-          description = "[Chat] Toggle buffer diff syncing",
+          description = "Toggle diff-only syncing of pinned buffers",
+          opts = { chat = { show_in_action_palette = false } },
         },
         next_chat = {
           modes = { n = "}" },
           index = 11,
           callback = "keymaps.next_chat",
-          description = "[Nav] Next chat",
+          description = "Open the next chat",
         },
         previous_chat = {
           modes = { n = "{" },
           index = 12,
           callback = "keymaps.previous_chat",
-          description = "[Nav] Previous chat",
+          description = "Open the previous chat",
         },
         next_header = {
           modes = { n = "]]" },
           index = 13,
           callback = "keymaps.next_header",
-          description = "[Nav] Next header",
+          description = "Jump to the next header",
         },
         previous_header = {
           modes = { n = "[[" },
           index = 14,
           callback = "keymaps.previous_header",
-          description = "[Nav] Previous header",
+          description = "Jump to the previous header",
         },
         change_adapter = {
           modes = { n = "ga" },
           index = 15,
           callback = "keymaps.change_adapter",
-          description = "[Adapter] Change adapter and model",
+          description = "Change adapter and model",
         },
         fold_code = {
           modes = { n = "gf" },
           index = 15,
           callback = "keymaps.fold_code",
-          description = "[Chat] Fold code",
+          description = "Fold all codeblocks",
         },
         debug = {
           modes = { n = "gd" },
           index = 16,
           callback = "keymaps.debug",
-          description = "[Chat] View debug info",
+          description = "Show debug info for the chat",
         },
         system_prompt = {
           modes = { n = "gs" },
           index = 17,
           callback = "keymaps.toggle_system_prompt",
-          description = "[Chat] Toggle system prompt",
+          description = "Toggle the system prompt on/off",
         },
         rules = {
           modes = { n = "gM" },
           index = 18,
           callback = "keymaps.clear_rules",
-          description = "[Chat] Clear Rules",
+          description = "Remove rules from the chat",
         },
         clear_approvals = {
           modes = { n = "gtx" },
           index = 19,
           callback = "keymaps.clear_approvals",
-          description = "[Tools] Clear approvals",
+          description = "Reset cached tool approvals",
         },
         yolo_mode = {
           modes = { n = "gty" },
           index = 20,
           callback = "keymaps.yolo_mode",
-          description = "[Tools] Toggle YOLO mode",
+          description = "Toggle auto-approval of tool calls",
         },
         goto_file_under_cursor = {
           modes = { n = "gR" },
           index = 21,
           callback = "keymaps.goto_file_under_cursor",
-          description = "[Chat] Open file under cursor",
+          description = "Open the file path under the cursor",
         },
         copilot_stats = {
           modes = { n = "gS" },
           index = 22,
           callback = "keymaps.copilot_stats",
-          description = "[Adapter] Copilot statistics",
+          description = "Show Copilot usage statistics",
+        },
+        -- Note: This is only available during streaming
+        _btw = {
+          modes = { n = "gm" },
+          callback = "keymaps.btw",
+          description = "Send a follow-up while streaming",
         },
       },
       opts = {
+        context_management = {
+          trigger = 0.75, -- Compaction starts at 75% of the context window limit
+          enabled = function(adapter)
+            if adapter.type ~= "http" then
+              return false
+            end
+            -- Anthropic and OpenAI have their own server-side compaction
+            if adapter.vendor and (adapter.vendor == "anthropic" or adapter.vendor == "openai") then
+              return false
+            end
+            return true
+          end,
+        },
+
         blank_prompt = "", -- The prompt to use when the user doesn't provide a prompt
         completion_provider = providers.completion, -- blink|cmp|coc|default
         debounce = 150, -- Time to debounce user input (milliseconds)
@@ -671,9 +714,6 @@ If you are providing code changes, use the insert_edit_into_file tool (if availa
         register = "+", -- The register to use for yanking code
         wait_timeout = 2e6, -- Time to wait for user response before timing out (milliseconds)
         yank_jump_delay_ms = 400, -- Delay before jumping back from the yanked code (milliseconds )
-
-        -- What to do when an ACP permission request times out? (allow_once|reject_once)
-        acp_timeout_response = "reject_once",
 
         ---@type string|fun(path: string)
         goto_file_action = ui_utils.tabnew_reuse,
@@ -768,12 +808,12 @@ The user is working on a %s machine. Please respond with system specific command
         next_chat = {
           modes = { n = "}" },
           callback = "keymaps.next_chat",
-          description = "[Nav] Next interaction",
+          description = "Open the next interaction",
         },
         previous_chat = {
           modes = { n = "{" },
           callback = "keymaps.previous_chat",
-          description = "[Nav] Previous interaction",
+          description = "Open the previous interaction",
         },
       },
     },
@@ -808,6 +848,8 @@ The user is working on a %s machine. Please respond with system specific command
           description = "Share all open buffers with the LLM",
           opts = {
             contains_code = true,
+            default_params = "diff", -- all|diff
+            has_params = true,
           },
         },
         ["diagnostics"] = {
@@ -975,6 +1017,12 @@ The user is working on a %s machine. Please respond with system specific command
             ".codecompanion/acp/claude_code_acp.md",
           },
         },
+        ["rules"] = {
+          description = "Rules in the plugin",
+          files = {
+            ".codecompanion/rules.md",
+          },
+        },
         ["tests"] = {
           description = "Testing in the plugin",
           files = {
@@ -998,6 +1046,7 @@ The user is working on a %s machine. Please respond with system specific command
     },
     parsers = {
       claude = "claude", -- Parser for CLAUDE.md files
+      cli = "cli", -- Parser for CLI interactions (file paths only, no content)
       codecompanion = "codecompanion", -- Parser for CodeCompanion specific rules files
       none = "none", -- No parsing, just raw text
     },

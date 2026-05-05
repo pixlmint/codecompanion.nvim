@@ -9,18 +9,31 @@ local M = {}
 local api = vim.api
 local fmt = string.format
 
----Establishes the connection, authenticates, creates a session and links the buffer
----@param chat CodeCompanion.Chat The chat instance
----@return boolean
-function M.create_acp_connection(chat)
-  local ACPHandler = require("codecompanion.interactions.chat.acp.handler")
-  local handler = ACPHandler.new(chat)
+---Establishes the connection, authenticates, creates a session and links the buffer.
+---@param chat CodeCompanion.Chat
+---@param cb? function
+---@return nil
+function M.create_acp_connection(chat, cb)
+  ---Run async so as not to block the UI
+  local async_utils = require("codecompanion.utils.async")
 
-  if not handler:ensure_connection() then
-    return false
+  local function call_cb()
+    if cb then
+      vim.schedule(cb)
+    end
   end
 
-  return handler:ensure_session()
+  async_utils.sync(function()
+    local ACPHandler = require("codecompanion.interactions.chat.acp.handler")
+    local handler = ACPHandler.new(chat)
+
+    if not handler:ensure_connection() then
+      return call_cb()
+    end
+
+    handler:ensure_session()
+    call_cb()
+  end)()
 end
 
 ---Format the given role without any separator
@@ -330,6 +343,30 @@ function M.format_viewport_for_llm(buf_lines)
   end
 
   return table.concat(formatted, "\n\n")
+end
+
+---Returns the number of tokens that trigger context management
+---@param adapter CodeCompanion.HTTPAdapter
+---@return number
+function M.trigger_context_management(adapter)
+  if adapter.type ~= "http" then
+    return 0
+  end
+
+  local ok
+  local trigger_tokens = config.interactions.chat.opts.context_management.trigger
+  if trigger_tokens < 1 then
+    ok, trigger_tokens = pcall(function()
+      return math.floor(trigger_tokens * adapter.schema.model.choices[adapter.schema.model.default].meta.context_window)
+    end)
+
+    if not ok then
+      log:error("Could not get evaluate the trigger for context management in the `%s` adapter", adapter.name)
+      return 0
+    end
+  end
+
+  return trigger_tokens
 end
 
 return M

@@ -6,38 +6,25 @@ local tool_utils = require("codecompanion.utils.tool_transformers")
 ---@type string|nil
 local response_id
 
----Resolves the options that a model has
----@param adapter CodeCompanion.HTTPAdapter
----@return table
-local function resolve_model_opts(adapter)
-  local model = adapter.schema.model.default
-  local choices = adapter.schema.model.choices
-  if type(model) == "function" then
-    model = model(adapter)
-  end
-  if type(choices) == "function" then
-    choices = choices(adapter, { async = false })
-  end
-  return choices[model]
-end
-
 ---@class CodeCompanion.HTTPAdapter.OpenAIResponses: CodeCompanion.HTTPAdapter
 return {
   name = "openai_responses",
+  vendor = "openai",
   formatted_name = "OpenAI_Responses",
   roles = {
     llm = "assistant",
     user = "user",
     tool = "tool",
   },
-  opts = {
-    stream = true,
-    tools = true,
-    vision = true,
-  },
   features = {
     text = true,
     tokens = true,
+  },
+  opts = {
+    compaction = true,
+    stream = true,
+    tools = true,
+    vision = true,
   },
   url = "https://api.openai.com/v1/responses",
   env = {
@@ -68,19 +55,21 @@ return {
       ---@param self CodeCompanion.HTTPAdapter
       ---@return boolean
       setup = function(self)
-        local model = self.schema.model.default
-        local model_opts = resolve_model_opts(self)
+        local model_opts = adapter_utils.model_choice(self)
 
         self.opts.vision = true
 
-        if model_opts and model_opts[model] and model_opts[model].opts then
-          self.opts = vim.tbl_deep_extend("force", self.opts, model_opts[model].opts)
+        if model_opts and model_opts.opts then
+          self.opts = vim.tbl_deep_extend("force", self.opts, model_opts.opts)
 
-          if not model_opts[model].opts.has_vision then
+          if not model_opts.opts.has_vision then
             self.opts.vision = false
           end
-          if not model_opts[model].opts.has_function_calling then
+          if not model_opts.opts.has_function_calling then
             self.opts.tools = false
+          end
+          if self.opts.compaction == false then
+            self.opts.can_manage_context = false
           end
         end
 
@@ -108,7 +97,7 @@ return {
       ---@param messages table
       ---@return table
       build_parameters = function(self, params, messages)
-        local model_opts = resolve_model_opts(self)
+        local model_opts = adapter_utils.model_choice(self)
         if model_opts and model_opts.opts and model_opts.opts.can_reason then
           params.include = { "reasoning.encrypted_content" }
         end
@@ -145,6 +134,11 @@ return {
           local m = messages[i]
 
           if m.role ~= "system" then
+            -- Add any compaction item stored from a previous response
+            if m._meta and m._meta.compaction then
+              table.insert(input, m._meta.compaction)
+            end
+
             -- Reasoning comes first
             if m.reasoning then
               local reasoning_item = {
@@ -234,7 +228,20 @@ return {
           i = i + 1
         end
 
+        local context_management = nil
+        if self.opts.can_manage_context then
+          local helpers = require("codecompanion.interactions.chat.helpers")
+
+          context_management = {
+            {
+              type = "compaction",
+              compact_threshold = math.max(50000, helpers.trigger_context_management(self)),
+            },
+          }
+        end
+
         return {
+          context_management = context_management,
           instructions = has_instructions and instructions or nil,
           input = input,
         }
@@ -369,19 +376,39 @@ return {
               end)
           end
 
-          local content = json.output
-              and json.output[1]
-              and json.output[1].content
-              and json.output[1].content[1]
-              and json.output[1].content[1].text
-            or nil
+          -- Compaction: only keep the latest item
+          local compaction = nil
+          if json.output then
+            for _, item in ipairs(json.output) do
+              if item.type == "compaction" then
+                compaction = item
+              end
+            end
+          end
+
+          local content = nil
+          if json.output then
+            for _, item in ipairs(json.output) do
+              if item.type == "message" and item.content then
+                for _, block in ipairs(item.content) do
+                  if block.type == "output_text" then
+                    content = (content or "") .. block.text
+                  end
+                end
+              end
+            end
+          end
 
           return {
             status = "success",
             output = {
-              role = self.roles.llm,
-              reasoning = reasoning,
               content = content,
+              meta = {
+                compaction = compaction,
+                response_id = response_id,
+              },
+              reasoning = reasoning,
+              role = self.roles.llm,
             },
           }
         end
@@ -402,6 +429,14 @@ return {
             role = self.roles.llm,
             content = json.delta or "",
             meta = { response_id = response_id },
+          }
+        elseif json.type == "response.output_item.added" and json.item and json.item.type == "compaction" then
+          output = {
+            meta = {
+              compaction = json.item,
+              response_id = response_id,
+            },
+            role = self.roles.llm,
           }
         elseif json.type == "response.completed" then
           if json.response and json.response.output then
@@ -435,12 +470,21 @@ return {
                 end
               end)
 
+            -- Compaction: only keep the latest item
+            local compaction = nil
+            for _, item in ipairs(json.response.output) do
+              if item.type == "compaction" then
+                compaction = item
+              end
+            end
+
             output = {
-              role = self.roles.llm,
-              reasoning = reasoning,
               meta = {
+                compaction = compaction,
                 response_id = response_id,
               },
+              reasoning = reasoning,
+              role = self.roles.llm,
             }
           end
         end
@@ -529,8 +573,9 @@ return {
         return {
           role = self.roles.tool or "tool",
           tools = {
-            id = tool_call.id,
             call_id = tool_call.call_id,
+            id = tool_call.id,
+            name = tool_call["function"].name,
           },
           content = output,
           opts = { visible = false },
@@ -545,43 +590,73 @@ return {
       type = "enum",
       desc = "ID of the model to use. See the model endpoint compatibility table for details on which models work with the Chat API.",
       ---@type string|fun(): string
-      default = "gpt-5-2025-08-07",
+      default = "gpt-5",
       choices = {
-        ["gpt-5-2025-08-07"] = {
-          formatted_name = "GPT-5",
-          opts = { has_function_calling = true, has_vision = true, can_reason = true },
+        ["gpt-5.4-pro"] = {
+          formatted_name = "GPT 5.4 Pro",
+          meta = { context_window = 1050000 },
+          opts = { can_manage_context = true, has_function_calling = true, has_vision = true, can_reason = true },
         },
-        ["codex-mini-latest"] = {
-          formatted_name = "Codex-mini",
-          opts = { has_function_calling = true, has_vision = true, can_reason = true },
+
+        -- Frontier models
+        ["gpt-5.4"] = {
+          formatted_name = "GPT 5.4",
+          meta = { context_window = 1050000 },
+          opts = { can_manage_context = true, has_function_calling = true, has_vision = true, can_reason = true },
+        },
+        ["gpt-5.4-mini"] = {
+          formatted_name = "GPT 5.4 Mini",
+          meta = { context_window = 400000 },
+          opts = { can_manage_context = true, has_function_calling = true, has_vision = true, can_reason = true },
+        },
+        ["gpt-5.4-nano"] = {
+          formatted_name = "GPT 5.4 Nano",
+          meta = { context_window = 400000 },
+          opts = { can_manage_context = true, has_function_calling = true, has_vision = true, can_reason = true },
+        },
+        ["gpt-5"] = {
+          formatted_name = "GPT-5",
+          meta = { context_window = 400000 },
+          opts = { can_manage_context = true, has_function_calling = true, has_vision = true, can_reason = true },
+        },
+        ["gpt-4.1"] = {
+          formatted_name = "GPT-4.1",
+          meta = { context_window = 1047576 },
+          opts = { can_manage_context = true, has_function_calling = true, has_vision = true, can_reason = true },
+        },
+
+        -- Codex models
+        ["gpt-5.3-codex"] = {
+          formatted_name = "GPT-5.3 Codex",
+
+          meta = { context_window = 400000 },
+          opts = { can_manage_context = true, has_function_calling = true, has_vision = true, can_reason = true },
+        },
+        ["gpt-5.2-codex"] = {
+          formatted_name = "GPT-5.2 Codex",
+          meta = { context_window = 400000 },
+
+          opts = { can_manage_context = true, has_function_calling = true, has_vision = true, can_reason = true },
+        },
+        ["gpt-5.1-codex-max"] = {
+          formatted_name = "GPT-5.1 Codex Max",
+          meta = { context_window = 400000 },
+          opts = { can_manage_context = true, has_function_calling = true, has_vision = true, can_reason = true },
+        },
+        ["gpt-5.1-codex"] = {
+          formatted_name = "GPT-5.1 Codex",
+          meta = { context_window = 400000 },
+          opts = { can_manage_context = true, has_function_calling = true, has_vision = true, can_reason = true },
         },
         ["gpt-5-codex"] = {
           formatted_name = "GPT-5 Codex",
-          opts = { has_function_calling = true, has_vision = true, can_reason = true },
+          meta = { context_window = 400000 },
+          opts = { can_manage_context = true, has_function_calling = true, has_vision = true, can_reason = true },
         },
+        -- ChatGPT models
         ["gpt-5-chat-latest"] = {
           formatted_name = "GPT-5 Chat",
           opts = { has_function_calling = true, has_vision = true },
-        },
-        ["gpt-5-pro-2025-10-06"] = {
-          formatted_name = "GPT-5 Pro",
-          opts = { has_function_calling = true, has_vision = true, can_reason = true, stream = false },
-        },
-        ["o4-mini-deep-research-2025-06-26"] = {
-          formatted_name = "o4-mini-deep-research",
-          opts = { has_function_calling = false, has_vision = true, can_reason = true },
-        },
-        ["o3-deep-research-2025-06-26"] = {
-          formatted_name = "o3-deep-research",
-          opts = { has_function_calling = false, has_vision = true, can_reason = true },
-        },
-        ["o3-pro-2025-06-10"] = {
-          formatted_name = "o3-pro",
-          opts = { has_function_calling = false, has_vision = true, can_reason = true, stream = false },
-        },
-        ["o1-pro-2025-03-19"] = {
-          formatted_name = "o1-pro",
-          opts = { has_function_calling = true, has_vision = true, can_reason = true, stream = false },
         },
       },
     },
@@ -671,6 +746,13 @@ return {
       optional = true,
       default = 1,
       desc = "An alternative to sampling with temperature, called nucleus sampling, where the model considers the results of the tokens with top_p probability mass. So 0.1 means only the tokens comprising the top 10% probability mass are considered. We generally recommend altering this or temperature but not both.",
+      enabled = function(self)
+        local model = adapter_utils.model(self)
+        if model == "gpt-5.4-nano" then
+          return false
+        end
+        return true
+      end,
       validate = function(n)
         return n >= 0 and n <= 1, "Must be between 0 and 1"
       end,

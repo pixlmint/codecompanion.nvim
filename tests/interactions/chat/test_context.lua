@@ -63,6 +63,43 @@ T["Context"]["Cannot be added twice with the same id"] = function()
   h.eq(1, child.lua_get([[#_G.chat.context_items]]), "Should only have 1 context item")
 end
 
+T["Context"]["Prompt-library slash commands add a single tool"] = function()
+  child.lua([[
+    local SlashCommands = require("codecompanion.interactions.chat.slash_commands")
+
+    SlashCommands.run({
+      from_prompt_library = true,
+      config = {
+        tools = { "weather" },
+        prompts = {},
+      },
+      context = {},
+    }, _G.chat)
+  ]])
+
+  local in_use = child.lua_get([[_G.chat.tool_registry.in_use]])
+  h.expect_tbl_contains("weather", in_use)
+end
+
+T["Context"]["Prompt-library slash commands add a tool group"] = function()
+  child.lua([[
+    local SlashCommands = require("codecompanion.interactions.chat.slash_commands")
+
+    SlashCommands.run({
+      from_prompt_library = true,
+      config = {
+        tools = { "senior_dev" },
+        prompts = {},
+      },
+      context = {},
+    }, _G.chat)
+  ]])
+
+  local in_use = child.lua_get([[_G.chat.tool_registry.in_use]])
+  h.expect_tbl_contains("func", in_use)
+  h.expect_tbl_contains("cmd", in_use)
+end
+
 T["Context"]["Can be deleted"] = function()
   child.lua([[
     -- Add context_items
@@ -227,7 +264,7 @@ T["Context"]["Can share all of a buffer"] = function()
    ]])
 
   h.eq(child.lua_get([[#_G.chat.messages]]), 4, "There are four messages")
-  h.eq(child.lua_get([[_G.chat.messages[#_G.chat.messages].content]]), "Basic Slash Command")
+  h.eq(child.lua_get([[_G.chat.messages[#_G.chat.messages - 1].content]]), "Basic Slash Command")
 
   local buffer = child.lua_get([[h.get_buf_lines(_G.chat.bufnr)]])
 
@@ -359,12 +396,12 @@ T["Context"]["file context_items use absolute paths"] = function()
      _G.chat:submit()
    ]])
 
-  local content = child.lua_get([[_G.chat.messages[#_G.chat.messages].content]])
+  local content = child.lua_get([[_G.chat.messages[#_G.chat.messages - 1].content]])
   h.expect_contains("tests/stubs/file.txt", content)
   h.expect_contains('<attachment filepath="', content)
   h.expect_contains("Here is the content from the file", content)
 
-  local context_id = child.lua_get([[_G.chat.messages[#_G.chat.messages].context.id]])
+  local context_id = child.lua_get([[_G.chat.messages[#_G.chat.messages - 1].context.id]])
   h.expect_contains("tests/stubs/file.txt", context_id)
 end
 

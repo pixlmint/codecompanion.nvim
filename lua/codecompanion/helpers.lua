@@ -6,7 +6,7 @@ local M = {}
 ---@return table
 function M.get_prompts()
   local context = context_utils.get(vim.api.nvim_get_current_buf())
-  return require("codecompanion.actions").get_cached_items(context)
+  return require("codecompanion.action_palette").get_cached_items(context)
 end
 
 ---Get short names of prompts from the prompt library
@@ -36,7 +36,8 @@ function M.show_diff(args)
   end
 
   if args.ft then
-    vim.api.nvim_set_option_value("filetype", args.ft, { buf = bufnr })
+    local safe_ft = require("codecompanion.utils").safe_filetype(args.ft)
+    vim.api.nvim_set_option_value("filetype", safe_ft, { buf = bufnr })
   end
 
   local diff = require("codecompanion.diff").create({

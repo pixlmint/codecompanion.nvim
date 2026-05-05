@@ -3,6 +3,7 @@ import { defineConfig } from "vitepress";
 import { execSync } from "node:child_process";
 import { withMermaid } from "vitepress-plugin-mermaid";
 import llmstxt from "vitepress-plugin-llms";
+import { copyOrDownloadAsMarkdownButtons } from "vitepress-plugin-llms";
 
 const inProd = process.env.NODE_ENV === "production";
 
@@ -60,6 +61,41 @@ const baseHeaders = [
       href: siteUrl + "/sitemap.xml",
     },
   ],
+  ["link", { rel: "icon", type: "image/png", href: "/favicon.png" }],
+  [
+    "script",
+    { type: "application/ld+json" },
+    JSON.stringify({
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "WebSite",
+          name: "CodeCompanion.nvim",
+          url: siteUrl,
+        },
+        {
+          "@type": "SoftwareApplication",
+          name: "CodeCompanion.nvim",
+          description:
+            "AI coding, Vim style. CodeCompanion is a plugin which enables you to code with AI, using LLMs and agents, in Neovim.",
+          applicationCategory: "DeveloperApplication",
+          operatingSystem: "Linux, macOS, Windows",
+          url: siteUrl,
+          downloadUrl: "https://github.com/olimorris/codecompanion.nvim",
+          author: {
+            "@type": "Person",
+            name: "Oli Morris",
+            url: "https://github.com/olimorris",
+          },
+          offers: {
+            "@type": "Offer",
+            price: "0",
+            priceCurrency: "USD",
+          },
+        },
+      ],
+    }),
+  ],
 ];
 
 const umamiScript = [
@@ -78,6 +114,11 @@ export default withMermaid(
     vite: {
       plugins: [llmstxt()],
     },
+    markdown: {
+      config(md) {
+        md.use(copyOrDownloadAsMarkdownButtons);
+      },
+    },
     mermaid: {
       securityLevel: "loose", // Allows more flexibility
       theme: "base", // Use base theme to allow CSS variables to take effect
@@ -85,7 +126,7 @@ export default withMermaid(
     // optionally set additional config for plugin itself with MermaidPluginConfig
     title: "CodeCompanion.nvim",
     description:
-      "AI coding in Neovim, leveraging LLMs from OpenAI and Anthropic. Support for agents and tools.",
+      "AI coding, Vim style. CodeCompanion is a plugin which enables you to code with AI, using LLMs and agents, in Neovim.",
     lang: "en",
     cleanUrls: true,
     head: headers,
@@ -122,7 +163,7 @@ export default withMermaid(
         { text: "Introduction", link: "/" },
         { text: "Installation", link: "/installation" },
         { text: "Getting Started", link: "/getting-started" },
-        { text: "Upgrading", link: "/upgrading" },
+        { text: "Architecture", link: "/architecture" },
         {
           text: "Agent Client Protocol (ACP)",
           link: "agent-client-protocol",
@@ -135,6 +176,8 @@ export default withMermaid(
           text: "Configuration",
           collapsed: true,
           items: [
+            { text: "Upgrading", link: "/configuration/upgrading" },
+
             { text: "Action Palette", link: "/configuration/action-palette" },
             { text: "Adapters - ACP", link: "/configuration/adapters-acp" },
             { text: "Adapters - HTTP", link: "/configuration/adapters-http" },

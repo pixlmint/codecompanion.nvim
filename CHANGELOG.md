@@ -1,5 +1,85 @@
 # Changelog
 
+## [19.13.0](https://github.com/olimorris/codecompanion.nvim/compare/v19.12.0...v19.13.0) (2026-05-04)
+
+
+### Features
+
+* **adapters:** update DeepSeek to support thinking mode and v4 models ([#3062](https://github.com/olimorris/codecompanion.nvim/issues/3062)) ([4939f94](https://github.com/olimorris/codecompanion.nvim/commit/4939f94e78d0420ecb6ea530973436c10e71b7da))
+* **chat:** action palette has static items ([#3079](https://github.com/olimorris/codecompanion.nvim/issues/3079)) ([dcc2bcb](https://github.com/olimorris/codecompanion.nvim/commit/dcc2bcb563fed0cbd88f2ee1a88e76da9cc2f0e4))
+* **chat:** add `/fork` slash command ([#3078](https://github.com/olimorris/codecompanion.nvim/issues/3078)) ([bce2b8a](https://github.com/olimorris/codecompanion.nvim/commit/bce2b8af5b88c6696076d3242a9e98350c4cad08))
+* **chat:** add action palette for chat ([#3066](https://github.com/olimorris/codecompanion.nvim/issues/3066)) ([cf03a08](https://github.com/olimorris/codecompanion.nvim/commit/cf03a0855bfe98daba2ffff8ffbfbb36b41e739e))
+
+
+### Bug Fixes
+
+* **adapters:** conform to standard tool structure ([#3077](https://github.com/olimorris/codecompanion.nvim/issues/3077)) ([57a1239](https://github.com/olimorris/codecompanion.nvim/commit/57a12397f7586ba751cce83869000bc20a0ac8bc))
+* **chat:** cancelling avoids orphan tool calls ([#3073](https://github.com/olimorris/codecompanion.nvim/issues/3073)) ([d972496](https://github.com/olimorris/codecompanion.nvim/commit/d972496805f1a7c932d64b91a6f2edb8bbe7f671))
+* **chat:** resolve model choices ([#3072](https://github.com/olimorris/codecompanion.nvim/issues/3072)) ([38a9f9e](https://github.com/olimorris/codecompanion.nvim/commit/38a9f9e03c9ab7ccd6353788347c2e2fdf89a366)), closes [#3067](https://github.com/olimorris/codecompanion.nvim/issues/3067)
+
+## [19.12.0](https://github.com/olimorris/codecompanion.nvim/compare/v19.11.0...v19.12.0) (2026-04-23)
+
+
+### Features
+
+* **adapters:** add KiloCode ACP ([#3034](https://github.com/olimorris/codecompanion.nvim/issues/3034)) ([48c6ae0](https://github.com/olimorris/codecompanion.nvim/commit/48c6ae010ca01b0bae01dd5a0f68f692ac3114a4))
+* **adapters:** add support for Opus 4.7 ([#3042](https://github.com/olimorris/codecompanion.nvim/issues/3042)) ([cdc6926](https://github.com/olimorris/codecompanion.nvim/commit/cdc69269cf4878983604d5c8093e2963753d1cfe))
+* **adapters:** context mgmt in `anthropic` and `openai_responses` ([#3049](https://github.com/olimorris/codecompanion.nvim/issues/3049)) ([cafa9e1](https://github.com/olimorris/codecompanion.nvim/commit/cafa9e140977b86e2d792c882f082073560e85f7))
+* **chat:** allow users to send a `btw` message ([#3060](https://github.com/olimorris/codecompanion.nvim/issues/3060)) ([d188af9](https://github.com/olimorris/codecompanion.nvim/commit/d188af9faa1e001a8062b69a4c43f6cf22d59fb4))
+
+
+### Bug Fixes
+
+* **chat:** nil tool name in `on_tool_output` ([#3046](https://github.com/olimorris/codecompanion.nvim/issues/3046)) ([e003fac](https://github.com/olimorris/codecompanion.nvim/commit/e003fac48f8af4fc2d4ece3ee2f6f1897f71b912))
+* **chat:** scope folds to buffer ([#3058](https://github.com/olimorris/codecompanion.nvim/issues/3058)) ([0ed124a](https://github.com/olimorris/codecompanion.nvim/commit/0ed124a503e8f7a90b9b67db352001cc6498865d)), closes [#3056](https://github.com/olimorris/codecompanion.nvim/issues/3056)
+
+## [19.11.0](https://github.com/olimorris/codecompanion.nvim/compare/v19.10.0...v19.11.0) (2026-04-11)
+
+
+### Features
+
+* **ui:** tweak approval prompts ([#3022](https://github.com/olimorris/codecompanion.nvim/issues/3022)) ([31e6c45](https://github.com/olimorris/codecompanion.nvim/commit/31e6c45db268c415d2c6a9356c44c6ba3aa75a75))
+
+
+### Bug Fixes
+
+* **acp:** cancel prompt and tools ([#3024](https://github.com/olimorris/codecompanion.nvim/issues/3024)) ([cdd623d](https://github.com/olimorris/codecompanion.nvim/commit/cdd623df1e0df646a5b2ab5fbf45abb496a3503f)), closes [#3011](https://github.com/olimorris/codecompanion.nvim/issues/3011)
+* **acp:** parallel tool calls that require approval ([#3021](https://github.com/olimorris/codecompanion.nvim/issues/3021)) ([b62de9d](https://github.com/olimorris/codecompanion.nvim/commit/b62de9d98e4cab415867bf4b972b5aa58033554b)), closes [#3014](https://github.com/olimorris/codecompanion.nvim/issues/3014)
+* **background:** title generation prompt ([#3004](https://github.com/olimorris/codecompanion.nvim/issues/3004)) ([fe792b3](https://github.com/olimorris/codecompanion.nvim/commit/fe792b30974893d8809b06c5e31c5c876c14bbc7))
+* **chat:** add tools from prompt library slash commands ([#3012](https://github.com/olimorris/codecompanion.nvim/issues/3012)) ([9724e13](https://github.com/olimorris/codecompanion.nvim/commit/9724e1386c41d3f986fd11cd127998c55dc26ea0))
+
+## [19.10.0](https://github.com/olimorris/codecompanion.nvim/compare/v19.9.0...v19.10.0) (2026-04-08)
+
+
+### Features
+
+* **acp:** add `session/set_config_option` support ([#3002](https://github.com/olimorris/codecompanion.nvim/issues/3002)) ([73833a0](https://github.com/olimorris/codecompanion.nvim/commit/73833a05c5ad69c4e02b786b021c0f9cecf11761))
+* **chat:** enable context window management ([#2942](https://github.com/olimorris/codecompanion.nvim/issues/2942)) ([0fcc5aa](https://github.com/olimorris/codecompanion.nvim/commit/0fcc5aab6a6837c5cb9af0eab6e9d06af72478b5))
+* **chat:** show tool approval feedback ([#2984](https://github.com/olimorris/codecompanion.nvim/issues/2984)) ([54af697](https://github.com/olimorris/codecompanion.nvim/commit/54af69718040fca0b152dab831e1bb35cedebf33))
+* **cli:** enable rules for cli interactions ([#2992](https://github.com/olimorris/codecompanion.nvim/issues/2992)) ([9eeea48](https://github.com/olimorris/codecompanion.nvim/commit/9eeea4820a091321b085db2155c6133833bf72b0))
+
+
+### Bug Fixes
+
+* **adapters:** resolve ollama models ([#2981](https://github.com/olimorris/codecompanion.nvim/issues/2981)) ([5143451](https://github.com/olimorris/codecompanion.nvim/commit/5143451945c5f84d8fbd44722d48de2b7378ec63))
+* **chat:** acp model selection ([#2989](https://github.com/olimorris/codecompanion.nvim/issues/2989)) ([b8a0ed1](https://github.com/olimorris/codecompanion.nvim/commit/b8a0ed12978bdbf3d43b12305e5297703836dfb4)), closes [#2986](https://github.com/olimorris/codecompanion.nvim/issues/2986)
+* **chat:** correct model count ([#2999](https://github.com/olimorris/codecompanion.nvim/issues/2999)) ([1089152](https://github.com/olimorris/codecompanion.nvim/commit/1089152621a1e688f38f8869d03ff721c57a292e))
+* showing the diff for c++ filetypes ([#2996](https://github.com/olimorris/codecompanion.nvim/issues/2996)) ([cb28752](https://github.com/olimorris/codecompanion.nvim/commit/cb287525006eadc40b7c012bf711b06215cca367)), closes [#2995](https://github.com/olimorris/codecompanion.nvim/issues/2995)
+
+## [19.9.0](https://github.com/olimorris/codecompanion.nvim/compare/v19.8.0...v19.9.0) (2026-04-04)
+
+
+### Features
+
+* **acp:** make connection async ([#2978](https://github.com/olimorris/codecompanion.nvim/issues/2978)) ([7684102](https://github.com/olimorris/codecompanion.nvim/commit/7684102be54d56997c5090e9931bd043929af173))
+* **chat:** `buffers` editor context can be configured ([#2970](https://github.com/olimorris/codecompanion.nvim/issues/2970)) ([65328ef](https://github.com/olimorris/codecompanion.nvim/commit/65328efc76966f1cb76d39dfba23d540a011a370))
+
+
+### Bug Fixes
+
+* **acp:** support session/set_config_option for models ([#2977](https://github.com/olimorris/codecompanion.nvim/issues/2977)) ([7ee8557](https://github.com/olimorris/codecompanion.nvim/commit/7ee85571c21cfced765126d5f5001796dcad1cf0)), closes [#2969](https://github.com/olimorris/codecompanion.nvim/issues/2969)
+* **chat:** duplicate rules ([#2976](https://github.com/olimorris/codecompanion.nvim/issues/2976)) ([eadd050](https://github.com/olimorris/codecompanion.nvim/commit/eadd05011e6941bcd8a614e7702748b358d07722))
+
 ## [19.8.0](https://github.com/olimorris/codecompanion.nvim/compare/v19.7.0...v19.8.0) (2026-03-30)
 
 

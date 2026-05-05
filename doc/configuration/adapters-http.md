@@ -1,12 +1,12 @@
 ---
-description: Learn how to configure adapters like OpenAI, Anthropic, Claude Code in CodeCompanion
+description: "Configure CodeCompanion's HTTP adapters to connect Neovim to OpenAI, Anthropic, Copilot, Gemini, and Ollama. Covers API keys, model selection, and proxy settings."
 ---
 
 # Configuring HTTP Adapters
 
 > [!TIP]
 > Want to connect to an LLM that isn't supported out of the box? Check out
-> [these](#community-adapters) user contributed adapters, [create](/extending/adapters.html) your own or post in the [discussions](https://github.com/olimorris/codecompanion.nvim/discussions)
+> [these](#community-adapters) user contributed adapters, [create](/extending/adapters) your own or post in the [discussions](https://github.com/olimorris/codecompanion.nvim/discussions)
 
 An adapter is what connects Neovim to an LLM provider and model. It's the interface that allows data to be sent, received and processed. There are a multitude of ways to customize them.
 
@@ -73,7 +73,7 @@ require("codecompanion").setup({
 
 :::
 
-## Changing Adapter Schema
+## Changing Adapter Parameters (Schema)
 
 > [!NOTE]
 > When extending an adapter with `extend`, use it's key from the `adapters` dictionary
@@ -126,6 +126,44 @@ require("codecompanion").setup({
 ```
 
 :::
+
+## Adding a Custom Adapter
+
+> [!NOTE]
+> See the [Creating Adapters](/extending/adapters) section to learn how to create custom adapters
+
+Custom adapters can be added to the plugin as follows:
+
+```lua
+require("codecompanion").setup({
+  adapters = {
+    http = {
+      my_custom_adapter = function()
+        return {} -- My adapter logic
+      end,
+    },
+  },
+})
+```
+
+## Controlling Model Choices
+
+When switching between adapters, the plugin typically displays all available model choices for the selected adapter. If you want to simplify the interface and have the default model automatically chosen (without showing any model selection UI), you can set the `show_model_choices` option to `false`:
+
+```lua
+require("codecompanion").setup({
+  adapters = {
+    http = {
+      -- Define your custom adapters here
+      opts = {
+        show_model_choices = false,
+      },
+    },
+  },
+})
+```
+
+With `show_model_choices = false`, the default model (as defined in the adapter's schema) will be automatically selected when changing adapters, and no model selection will be shown to the user.
 
 ## Environment Variables
 
@@ -202,7 +240,7 @@ require("codecompanion").setup({
 :::
 
 > [!NOTE]
-> In this _command_ example, we're using the 1Password CLI to extract the Gemini API Key. You could also use gpg as outlined [here](https://github.com/olimorris/codecompanion.nvim/discussions/601)
+> In this _command_ example, we're using the 1Password CLI to extract the Gemini API Key. You could also [use gpg as outlined in this community discussion](https://github.com/olimorris/codecompanion.nvim/discussions/601)
 
 Supported `env` value types:
 - **Plain environment variable name (string)**: if the value is the name of an environment variable that has already been set (e.g. `"HOME"` or `"GEMINI_API_KEY"`), the plugin will read the value.
@@ -210,20 +248,37 @@ Supported `env` value types:
 - **Function**: you can provide a Lua function which returns a string and will be called with the adapter as its sole argument.
 - **Schema reference (dot notation)**: you can reference values from the adapter table (for example `"schema.model.default"`).
 
-## Adding a Custom Adapter
+## Disabling Compaction
 
-> [!NOTE]
-> See the [Creating Adapters](/extending/adapters) section to learn how to create custom adapters
-
-Custom adapters can be added to the plugin as follows:
+If you use the `anthropic` or `openai_responses` adapters, then the plugin will look to use their server-side compaction capabilities to manage context. If you want to disable this:
 
 ```lua
 require("codecompanion").setup({
   adapters = {
     http = {
-      my_custom_adapter = function()
-        return {} -- My adapter logic
+      anthropic = function()
+        return require("codecompanion.adapters").extend("anthropic", {
+          opts = {
+            compaction = false,
+          },
+        })
       end,
+    },
+  },
+})
+```
+
+## Hiding Preset Adapters
+
+By default, the plugin shows all available adapters, including the presets. If you prefer to only display the adapters defined in your user configuration, you can set the `show_presets` option to `false`:
+
+```lua
+require("codecompanion").setup({
+  adapters = {
+    http = {
+      opts = {
+        show_presets = false,
+      },
     },
   },
 })
@@ -246,41 +301,6 @@ require("codecompanion").setup({
 }),
 ```
 
-
-## Hiding Preset Adapters
-
-By default, the plugin shows all available adapters, including the presets. If you prefer to only display the adapters defined in your user configuration, you can set the `show_presets` option to `false`:
-
-```lua
-require("codecompanion").setup({
-  adapters = {
-    http = {
-      opts = {
-        show_presets = false,
-      },
-    },
-  },
-})
-```
-
-## Controlling Model Choices
-
-When switching between adapters, the plugin typically displays all available model choices for the selected adapter. If you want to simplify the interface and have the default model automatically chosen (without showing any model selection UI), you can set the `show_model_choices` option to `false`:
-
-```lua
-require("codecompanion").setup({
-  adapters = {
-    http = {
-      -- Define your custom adapters here
-      opts = {
-        show_model_choices = false,
-      },
-    },
-  },
-})
-```
-
-With `show_model_choices = false`, the default model (as defined in the adapter's schema) will be automatically selected when changing adapters, and no model selection will be shown to the user.
 
 ## Setup Examples
 
@@ -444,4 +464,4 @@ Thanks to the community for building the following adapters:
 - [Venice.ai](https://github.com/olimorris/codecompanion.nvim/discussions/972)
 - [Vertex AI](https://github.com/viespejo/cc-adapter-vertex-ai.nvim)
 
-The section of the discussion forums which is dedicated to user created adapters can be found [here](https://github.com/olimorris/codecompanion.nvim/discussions?discussions_q=is%3Aopen+label%3A%22tip%3A+adapter%22). Use these individual threads as a place to raise issues and ask questions about your specific adapters.
+The section of the discussion forums dedicated to user-created adapters can be found in the [adapter discussions on GitHub](https://github.com/olimorris/codecompanion.nvim/discussions?discussions_q=is%3Aopen+label%3A%22tip%3A+adapter%22). Use these individual threads as a place to raise issues and ask questions about your specific adapters.

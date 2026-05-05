@@ -1,5 +1,5 @@
 ---
-description: Configure CodeCompanion's native chat buffer, to enable Vim like coding with AI
+description: "Configure CodeCompanion's chat buffer — keymaps, display options, context management, system prompt, and tool settings for AI-assisted coding in Neovim."
 ---
 
 # Configuring the Chat Buffer
@@ -73,6 +73,7 @@ Callbacks allow you to hook into the chat buffer's lifecycle and react to specif
 | `on_created` | Chat buffer has been created | - |
 | `on_before_submit` | Before the message is sent to the LLM. Return `false` to prevent submission | `{ adapter }` |
 | `on_submitted` | After the message has been sent to the LLM | `{ payload }` |
+| `on_checkpoint` | Fires at safe points during the chat lifecycle. Messages are mutable | `{ adapter, estimated_tokens, messages, reported_tokens }` |
 | `on_tool_output` | Before tool output is added to the chat. Mutate `args.for_llm`/`args.for_user` to modify | `{ tool, for_llm, for_user }` |
 | `on_ready` | Chat is ready for the next turn (after LLM response) | - |
 | `on_completed` | LLM response has been fully processed | `{ status }` |
@@ -203,6 +204,122 @@ vim.api.nvim_create_autocmd("User", {
 })
 ```
 
+### Checkpoints
+
+The `on_checkpoint` callback fires at various safe points during the chat lifecycle, giving you the ability to inspect and mutate the message stack before the chat continues. It fires:
+
+- **Before submit** — Before a request is sent to an LLM
+- **After tool output** — Once tools in the current batch have finished, ensuring no orphaned tool calls
+- **After a response with no tools** — When the LLM responds, minus any tool calls
+
+The `data` table contains:
+
+- `adapter` — a safe copy of the current adapter (includes `meta.context_window` for HTTP adapters)
+- `estimated_tokens` — client-side token estimate across all messages
+- `messages` — a **mutable reference** to the chat's message stack. Changes made here persist back to the chat
+- `reported_tokens` — server-reported token count (if available from the adapter)
+
+This is useful for monitoring context window usage and compacting the message stack:
+
+```lua
+vim.api.nvim_create_autocmd("User", {
+  pattern = "CodeCompanionChatCreated",
+  callback = function(args)
+    local chat = require("codecompanion").buf_get_chat(args.data.bufnr)
+    chat:add_callback("on_checkpoint", function(c, data)
+      local context_window = data.adapter.meta and data.adapter.meta.context_window
+      if not context_window then
+        return
+      end
+
+      local usage = data.estimated_tokens / context_window
+      if usage > 0.8 then
+        vim.notify(
+          string.format("Context window %.0f%% full", usage * 100),
+          vim.log.levels.WARN
+        )
+        -- Compact data.messages in-place here
+      end
+    end)
+  end,
+})
+```
+
+## Context Management
+
+CodeCompanion can manage context in the chat buffer to try and prevent breaching the LLM's context window. It can be enabled with:
+
+::: code-group
+
+```lua [Boolean]
+require("codecompanion").setup({
+  interactions = {
+    chat = {
+      opts = {
+        context_management = {
+          enabled = true,
+        },
+      },
+    },
+  },
+})
+```
+
+```lua [Function]
+require("codecompanion").setup({
+  interactions = {
+    chat = {
+      opts = {
+        context_management = {
+          enabled = function(adapter)
+            if adapter.type ~= "http" then
+              return false
+            end
+            return true
+          end,
+        },
+      },
+    },
+  },
+})
+```
+
+:::
+
+CodeCompanion makes use of a trigger, a threshold at which the context management begins. You can specify a `trigger` as either a decimal (representing a percentage of the context window) or an integer (representing a token count). When the chat buffer reaches the defined trigger, preventative action is taken by CodeCompanion. You can read more in the [architecture](/architecture#manage-context) section.
+
+::: code-group
+
+```lua [Decimal]
+require("codecompanion").setup({
+  interactions = {
+    chat = {
+      opts = {
+        context_management = {
+          trigger = 0.75, -- Percent of the context window (e.g., 0.75 for 75%)
+        },
+      },
+    },
+  },
+})
+```
+
+```lua [Integer]
+require("codecompanion").setup({
+  interactions = {
+    chat = {
+      opts = {
+        context_management = {
+          trigger = 50000, -- tokens
+        },
+      },
+    },
+  },
+})
+```
+
+:::
+
 ## Diff
 
 <img src="https://github.com/user-attachments/assets/8d80ed10-12f2-4c0b-915f-63b70797a6ca" alt="Diff"/>
@@ -284,10 +401,6 @@ require("codecompanion").setup({
           modes = { n = "<C-c>", i = "<C-c>" },
           opts = {},
         },
-        -- Change further custom keymaps here
-        -- ...
-        -- Set a keymap to be false to disable it
-        some_other_keymap = false,
       },
     },
   },
@@ -345,6 +458,22 @@ require("codecompanion").setup({
 
 For the chat interaction, the keymaps are mapped to `<C-s>` for sending a message and `<C-c>` for closing in both normal and insert modes. To set other `:map-arguments`, you can use the optional `opts` table which will be fed to `vim.keymap.set`.
 
+To disable a keymap, you can set it to `false` in your configuration:
+
+```lua
+require("codecompanion").setup({
+  interactions = {
+    chat = {
+      keymaps = {
+        send = false,
+        close = false
+      }
+    }
+  }
+})
+```
+
+
 ## Prompt Decorator
 
 It can be useful to decorate your prompt with additional information, prior to sending to an LLM. For example, the GitHub Copilot prompt in VS Code, wraps a user's prompt between `<prompt></prompt>` tags, presumably to differentiate the user's ask from additional context. This can also be achieved in CodeCompanion:
@@ -377,7 +506,7 @@ The decorator function also has access to the adapter in the chat buffer alongsi
 
 [Slash Commands](https://github.com/olimorris/codecompanion.nvim/blob/main/lua/codecompanion/config.lua#L114) (invoked with `/` by default) let you dynamically insert context into the chat buffer, such as file contents or date/time.
 
-The plugin supports providers like [telescope](https://github.com/nvim-telescope/telescope.nvim), [mini_pick](https://github.com/echasnovski/mini.pick), [fzf_lua](https://github.com/ibhagwan/fzf-lua) and [snacks.nvim](https://github.com/folke/snacks.nvim). By default, the plugin will automatically detect if you have any of those plugins installed and duly set them as the default provider. Failing that, the in-built `default` provider will be used. Please see the [Chat Buffer](/usage/chat-buffer/index) usage section for information on how to use Slash Commands.
+The plugin supports providers like [telescope](https://github.com/nvim-telescope/telescope.nvim), [mini_pick](https://github.com/echasnovski/mini.pick), [fzf_lua](https://github.com/ibhagwan/fzf-lua) and [snacks.nvim](https://github.com/folke/snacks.nvim). By default, the plugin will automatically detect if you have any of those plugins installed and duly set them as the default provider. Failing that, the in-built `default` provider will be used. Please see the [Chat Buffer](/usage/chat-buffer/) usage section for information on how to use Slash Commands.
 
 ::: code-group
 

@@ -21,6 +21,7 @@
 local METHODS = require("codecompanion.acp.methods")
 local PromptBuilder = require("codecompanion.acp.prompt_builder")
 local adapter_utils = require("codecompanion.utils.adapters")
+local async = require("codecompanion.utils.async")
 local config = require("codecompanion.config")
 local jsonrpc = require("codecompanion.utils.jsonrpc")
 local log = require("codecompanion.utils.log")
@@ -50,8 +51,8 @@ local uv = vim.uv
 ---@field _state {handle: table, id_gen: CodeCompanion.JsonRPC.IdGenerator, line_buffer: CodeCompanion.JsonRPC.LineBuffer}
 ---@field _loading_session boolean|nil
 ---@field _on_session_update function|nil
----@field _modes {currentModeId: string, availableModes: table[]}|nil
----@field _models {currentModelId: string, availableModels: table[]}|nil
+---@field _config_options table[] Raw configOptions from the agent
+---@field _pending_callbacks table<number, function> Async callbacks keyed by request ID
 ---@field methods table
 local Connection = {}
 
@@ -85,12 +86,13 @@ function Connection.new(args)
   local self = setmetatable({
     adapter = args.adapter,
     adapter_modified = {},
+    methods = methods,
     pending_responses = {},
     session_id = args.session_id,
-    methods = methods,
-    _initialized = false,
     _authenticated = false,
-    _modes = nil,
+    _config_options = {},
+    _initialized = false,
+    _pending_callbacks = {},
     _state = { handle = nil, id_gen = jsonrpc.IdGenerator.new(), line_buffer = jsonrpc.LineBuffer.new() },
   }, { __index = Connection }) ---@cast self CodeCompanion.ACP.Connection
 
@@ -140,6 +142,7 @@ function Connection:connect_and_authenticate()
     end
 
     self._initialized = true
+    log:debug("[acp] Initialized (protocol_version=%s)", initialized.protocolVersion or "unknown")
 
     api.nvim_create_autocmd("VimLeavePre", {
       group = api.nvim_create_augroup("codecompanion.acp.disconnect", { clear = false }),
@@ -178,8 +181,11 @@ function Connection:connect_and_initialize()
     return nil
   end
 
-  self:apply_default_model()
-  self:apply_default_mode()
+  self:apply_default_config_options()
+
+  utils.fire("ACPSessionPost", {
+    session_id = self.session_id,
+  })
 
   return self
 end
@@ -229,6 +235,7 @@ function Connection:_authenticate()
     self._authenticated = true
   end
 
+  log:debug("[acp] Authenticated")
   return true
 end
 
@@ -252,8 +259,11 @@ function Connection:ensure_session()
     return false
   end
 
-  self:apply_default_model()
-  self:apply_default_mode()
+  self:apply_default_config_options()
+
+  utils.fire("ACPSessionPost", {
+    session_id = self.session_id,
+  })
 
   return true
 end
@@ -340,8 +350,7 @@ function Connection:load_session(session_id, opts)
   self._loading_session = nil
   self._on_session_update = nil
 
-  self:apply_default_model()
-  self:apply_default_mode()
+  self:apply_default_config_options()
 
   return true
 end
@@ -363,13 +372,9 @@ function Connection:_establish_session()
   end
 
   local function apply_session_metadata(session_data, source)
-    if session_data.modes then
-      self._modes = session_data.modes
-      log:debug("[acp::_establish_session] %s modes: %s", source, session_data.modes)
-    end
-    if session_data.models then
-      self._models = session_data.models
-      log:debug("[acp::_establish_session] %s models: %s", source, session_data.models)
+    if session_data.configOptions then
+      self:_apply_config_options(session_data.configOptions)
+      log:debug("[acp::_establish_session] %s config options applied", source)
     end
   end
 
@@ -395,103 +400,79 @@ function Connection:_establish_session()
     apply_session_metadata(new_session, "New session")
   end
 
+  log:debug("[acp] Session established: %s", self.session_id)
   return true
 end
 
----Apply the default model from the adapter config
----@return boolean
-function Connection:apply_default_model()
-  if not self._models then
-    return false
-  end
+---Apply default session config options from a user's adapter config
+---@return nil
+function Connection:apply_default_config_options()
+  local adapter_defaults = self.adapter_modified and self.adapter_modified.defaults or {}
 
-  local default_model = self.adapter_modified
-    and self.adapter_modified.defaults
-    and self.adapter_modified.defaults.model
-  if not default_model then
-    return false
+  -- TODO: Remove in v20.0.0
+  -- Support old model and mode fields as fallback
+  local merged = {}
+  if adapter_defaults.model then
+    merged.model = adapter_defaults.model
   end
-
-  -- Support function values for default model
-  if type(default_model) == "function" then
-    default_model = default_model(self.adapter_modified)
+  if adapter_defaults.mode then
+    merged.mode = adapter_defaults.mode
   end
-
-  if type(default_model) ~= "string" or default_model == "" then
-    return false
-  end
-
-  -- Check if the requested model is available
-  local model_id = nil
-  for _, model in ipairs(self._models.availableModels or {}) do
-    -- Match by modelId and then by partial name match (e.g., "opus" matches "claude-opus-4")
-    if model.modelId == default_model then
-      model_id = model.modelId
-      break
-    elseif model.modelId:lower():find(default_model:lower(), 1, true) then
-      model_id = model.modelId
-      break
+  if adapter_defaults.session_config_options then
+    for k, v in pairs(adapter_defaults.session_config_options) do
+      merged[k] = v
     end
   end
 
-  if not model_id then
-    log:warn("[acp::apply_default_model] Model `%s` not found in available models", default_model)
-    return false
+  if vim.tbl_isempty(merged) then
+    return
   end
 
-  if model_id == self._models.currentModelId then
-    log:debug("[acp::apply_default_model] Model `%s` is already selected", model_id)
-    return true
-  end
-
-  return self:set_model(model_id)
-end
-
----Apply the default mode from the adapter config
----@return boolean
-function Connection:apply_default_mode()
-  if not self._modes then
-    return false
-  end
-
-  local default_mode = self.adapter_modified and self.adapter_modified.defaults and self.adapter_modified.defaults.mode
-  if not default_mode then
-    return false
-  end
-
-  -- Support function values for default mode
-  if type(default_mode) == "function" then
-    default_mode = default_mode(self.adapter_modified)
-  end
-
-  if type(default_mode) ~= "string" or default_mode == "" then
-    return false
-  end
-
-  -- Check if the requested mode is available
-  local mode_id = nil
-  for _, mode in ipairs(self._modes.availableModes or {}) do
-    -- Match by id first, then by partial name match (e.g., "plan" matches mode with name containing "plan")
-    if mode.id == default_mode then
-      mode_id = mode.id
-      break
-    elseif mode.name and mode.name:lower():find(default_mode:lower(), 1, true) then
-      mode_id = mode.id
-      break
+  -- Index config options by category for quick lookup
+  -- Ref: https://agentclientprotocol.com/protocol/session-config-options#option-categories
+  local by_category = {}
+  for _, opt in ipairs(self._config_options) do
+    if opt.category and opt.type == "select" then
+      by_category[opt.category] = opt
     end
   end
 
-  if not mode_id then
-    log:warn("[acp::apply_default_mode] Mode `%s` not found in available modes", default_mode)
-    return false
-  end
+  for category, default_value in pairs(merged) do
+    if type(default_value) == "function" then
+      default_value = default_value(self.adapter_modified)
+    end
+    if type(default_value) ~= "string" or default_value == "" then
+      goto continue
+    end
 
-  if mode_id == self._modes.currentModeId then
-    log:debug("[acp::apply_default_mode] Mode `%s` is already selected", mode_id)
-    return true
-  end
+    local opt = by_category[category]
+    if not opt then
+      log:warn("[acp::apply_default_config_options] No config option with category `%s`", category)
+      goto continue
+    end
 
-  return self:set_mode(mode_id)
+    local match_value
+    for _, val in ipairs(Connection.flatten_config_options(opt.options or {})) do
+      if val.value == default_value then
+        match_value = val.value
+        break
+      elseif val.name and val.name:lower():find(default_value:lower(), 1, true) then
+        match_value = val.value
+        break
+      end
+    end
+
+    if not match_value then
+      log:warn("ACP: Could not set value `%s` not found for `%s`", default_value, category)
+      goto continue
+    end
+
+    if match_value ~= opt.currentValue then
+      self:set_config_option(opt.id, match_value)
+    end
+
+    ::continue::
+  end
 end
 
 ---Create the ACP process
@@ -540,10 +521,11 @@ function Connection:start_agent_process()
   end
 
   self._state.handle = sysobj
+  log:debug("[acp] Process started: %s", table.concat(self.adapter_modified.command, " "))
   return true
 end
 
----Send a synchronous request and wait for response
+---If called inside an async coroutine, yields until the response arrives, or fallsback to sync
 ---@param method string
 ---@param params table
 ---@return table|nil
@@ -559,6 +541,14 @@ function Connection:send_rpc_request(method, params)
     return nil
   end
 
+  -- Async path: yield and let store_rpc_response resume us
+  if coroutine.running() then
+    return async.wait(function(callback)
+      self._pending_callbacks[id] = callback
+    end)
+  end
+
+  -- Sync fallback
   return self:wait_for_rpc_response(id)
 end
 
@@ -619,10 +609,11 @@ function Connection:disconnect()
   assert(self._state.handle):kill(9)
 end
 
----Process the output - JSON-RPC doesn't guarantee message boundaries align
----with I/O boundaries, so we need to buffer and handle this carefully.
+---Process the output
 ---@param data string
 function Connection:buffer_stdout_and_dispatch(data)
+  -- JSON-RPC doesn't guarantee message boundaries align with I/O boundaries
+  -- so we need to buffer and handle this carefully.
   self._state.line_buffer:push(data, function(line)
     self:handle_rpc_message(line)
   end)
@@ -648,7 +639,7 @@ function Connection:handle_rpc_message(line)
   if message.id and not message.method then
     self:store_rpc_response(message)
     if message.result and message.result ~= vim.NIL and message.result.stopReason then
-      if self._active_prompt and self._active_prompt.handle_done then
+      if self._active_prompt and self._active_prompt._request_id == message.id and self._active_prompt.handle_done then
         self._active_prompt:handle_done(message.result.stopReason)
       end
     end
@@ -663,24 +654,36 @@ function Connection:handle_rpc_message(line)
   end
 end
 
----Handle response to our request
+---Handles the response to the request
 ---@param response table
 function Connection:store_rpc_response(response)
+  local function forward_error_to_prompt()
+    if not response.error or not self._active_prompt or not self._active_prompt.handle_error then
+      return
+    end
+    self.methods.schedule(function()
+      local error_msg = response.error.message or "Unknown error"
+      if response.error.data and response.error.data.error then
+        error_msg = response.error.data.error
+      end
+      self._active_prompt:handle_error(error_msg)
+    end)
+  end
+
+  -- Async path: resume the waiting coroutine via its callback
+  local cb = self._pending_callbacks[response.id]
+  if cb then
+    self._pending_callbacks[response.id] = nil
+    self.methods.schedule(function()
+      cb((not response.error) and response.result or nil)
+    end)
+    return forward_error_to_prompt()
+  end
+
+  -- Sync path: store for polling
   if response.error then
     self.pending_responses[response.id] = { nil, response.error }
-
-    -- Sometimes errors are passed as part of the response so we need to handle them
-    if self._active_prompt and self._active_prompt.handle_error then
-      self.methods.schedule(function()
-        local error_msg = response.error.message or "Unknown error"
-        if response.error.data and response.error.data.error then
-          error_msg = response.error.data.error
-        end
-
-        self._active_prompt:handle_error(error_msg)
-      end)
-    end
-    return
+    return forward_error_to_prompt()
   end
   self.pending_responses[response.id] = { response.result, nil }
 end
@@ -698,8 +701,8 @@ local DISPATCH = {
   [METHODS.SESSION_UPDATE] = function(self, m)
     if m.params.update and m.params.update.sessionUpdate == "available_commands_update" then
       self:handle_available_commands_update(m.params.sessionId, m.params.update.availableCommands)
-    elseif m.params.update and m.params.update.sessionUpdate == "current_mode_update" then
-      self:handle_current_mode_update(m.params.sessionId, m.params.update.modeId)
+    elseif m.params.update and m.params.update.sessionUpdate == "config_option_update" then
+      self:handle_config_option_update(m.params.sessionId, m.params.update.configOptions)
     elseif m.params.update and m.params.update.sessionUpdate == "session_info_update" then
       self:handle_session_info_update(m.params.sessionId, m.params.update)
     elseif self._loading_session and self._on_session_update then
@@ -837,7 +840,8 @@ function Connection:handle_fs_write_file_request(id, params)
   end
 end
 
----Handle available_commands_update notification
+---Handle available_commands_update (Slash Commands)
+---Ref: https://agentclientprotocol.com/protocol/slash-commands
 ---@param session_id string
 ---@param commands ACP.availableCommands
 ---@return nil
@@ -854,25 +858,35 @@ function Connection:handle_available_commands_update(session_id, commands)
   acp_commands.register_commands(session_id, commands)
 end
 
----Handle current_mode_update notification
+---Store raw configOptions from the agent
+---@param config_options table[] Array of SessionConfigOption
+function Connection:_apply_config_options(config_options)
+  self._config_options = config_options
+  log:debug("[acp] Config options: %s", config_options)
+end
+
+---Find a config option by category
+---@param category string
+---@return table|nil
+function Connection:_find_config_option(category)
+  for _, opt in ipairs(self._config_options) do
+    if opt.category == category and opt.type == "select" then
+      return opt
+    end
+  end
+end
+
+---Handle config_option_update notification
 ---@param session_id string
----@param mode_id string
+---@param config_options table[]|nil
 ---@return nil
-function Connection:handle_current_mode_update(session_id, mode_id)
-  if not session_id then
+function Connection:handle_config_option_update(session_id, config_options)
+  if not session_id or session_id ~= self.session_id then
     return
   end
-
-  if session_id ~= self.session_id then
-    return
+  if type(config_options) == "table" then
+    self:_apply_config_options(config_options)
   end
-
-  if not self._modes then
-    return
-  end
-
-  -- Update the current mode
-  self._modes.currentModeId = mode_id
 end
 
 ---Handle session_info_update notification
@@ -903,16 +917,25 @@ end
 ---@param code number
 ---@param signal number
 function Connection:handle_process_exit(code, signal)
+  log:debug("[acp] Process exited (code=%s, signal=%s)", code, signal)
+
   if self.adapter_modified and self.adapter_modified.handlers and self.adapter_modified.handlers.on_exit then
     self.adapter_modified.handlers.on_exit(self.adapter_modified, code)
   end
 
+  -- Fire any pending async callbacks so coroutines don't hang
+  for id, cb in pairs(self._pending_callbacks) do
+    self._pending_callbacks[id] = nil
+    pcall(cb, nil)
+  end
+
   -- Always clean up state
   self.adapter_modified = nil
-  self._initialized = false
   self._authenticated = false
-  self.session_id = nil
+  self._initialized = false
+  self._pending_callbacks = {}
   self.pending_responses = {}
+  self.session_id = nil
 
   if self._active_prompt and self._active_prompt.handle_done then
     pcall(function()
@@ -932,95 +955,104 @@ function Connection:session_prompt(messages)
   return PromptBuilder.new(self, messages)
 end
 
----Get the available session modes
----@return table|nil modes {currentModeId: string, availableModes: table[]} or nil if not supported
-function Connection:get_modes()
-  return self._modes
-end
-
----Set the current session mode
----@param mode_id string The ID of the mode to switch to
----@return boolean success
-function Connection:set_mode(mode_id)
-  return self:_set_session_property({
-    value = mode_id,
-    collection = self._modes,
-    items_key = "availableModes",
-    current_key = "currentModeId",
-    id_key = "id",
-    rpc_method = METHODS.SESSION_SET_MODE,
-    rpc_param_key = "modeId",
-    label = "mode",
-  })
-end
-
 ---Get the available models
----@return table|nil models {currentModelId: string, availableModels: table[]} or nil if not supported
+---@return table|nil models {currentModelId: string, availableModels: table[]} or nil
 function Connection:get_models()
-  return self._models
+  local opt = self:_find_config_option("model")
+  if not opt then
+    return nil
+  end
+
+  local available = vim.tbl_map(function(val)
+    return { modelId = val.value, name = val.name }
+  end, Connection.flatten_config_options(opt.options or {}))
+
+  return {
+    availableModels = available,
+    currentModelId = opt.currentValue,
+  }
 end
 
----Set a model
----@param model_id string The ID of the model to switch to
+---Set a model via session/set_config_option
+---@param model_id string
 ---@return boolean success
 function Connection:set_model(model_id)
-  return self:_set_session_property({
-    value = model_id,
-    collection = self._models,
-    items_key = "availableModels",
-    current_key = "currentModelId",
-    id_key = "modelId",
-    rpc_method = METHODS.SESSION_SET_MODEL,
-    rpc_param_key = "modelId",
-    label = "model",
-  })
+  local opt = self:_find_config_option("model")
+  if not opt then
+    log:error("[acp::set_model] Agent does not support changing models")
+    return false
+  end
+
+  return self:set_config_option(opt.id, model_id)
 end
 
----Shared helper to validate and set a session property (mode or model)
----@param args { value: string, collection: table|nil, items_key: string, current_key: string, id_key: string, rpc_method: string, rpc_param_key: string, label: string }
+---Get all config options, optionally excluding certain categories
+---@param opts? { exclude_categories?: string[] }
+---@return table[] Array of SessionConfigOption
+function Connection:get_config_options(opts)
+  opts = opts or {}
+  if not opts.exclude_categories then
+    return self._config_options or {}
+  end
+
+  local exclude = {}
+  for _, category in ipairs(opts.exclude_categories) do
+    exclude[category] = true
+  end
+
+  return vim.tbl_filter(function(opt)
+    return not exclude[opt.category]
+  end, self._config_options or {})
+end
+
+---Set a config option via session/set_config_option
+---@param config_id string The config option ID
+---@param value string The value ID to set
 ---@return boolean success
-function Connection:_set_session_property(args)
+function Connection:set_config_option(config_id, value)
   if not self.session_id then
-    log:error("[acp::set_%s] Connection not established", args.label)
+    log:error("[acp::set_config_option] Connection not established")
     return false
   end
 
-  if not args.collection then
-    log:error("[acp::set_%s] Agent does not support changing %ss", args.label, args.label)
-    return false
-  end
-
-  local valid = false
-  for _, item in ipairs(args.collection[args.items_key] or {}) do
-    if item[args.id_key] == args.value then
-      valid = true
-      break
-    end
-  end
-
-  if not valid then
-    log:error("[acp::set_%s] Invalid %s ID: %s", args.label, args.label, args.value)
-    return false
-  end
-
-  if args.value == args.collection[args.current_key] then
-    return false
-  end
-
-  local ok = self:send_rpc_request(args.rpc_method, {
-    [args.rpc_param_key] = args.value,
+  -- Ref: https://agentclientprotocol.com/protocol/session-config-options#from-the-client
+  local result = self:send_rpc_request(METHODS.SESSION_SET_CONFIG_OPTION, {
     sessionId = self.session_id,
+    configId = config_id,
+    value = value,
   })
 
-  if not ok then
-    log:error("[acp::set_%s] Failed to set %s to %s", args.label, args.label, args.value)
+  if not result then
+    log:error("[acp::set_config_option] Failed to set %s to %s", config_id, value)
     return false
   end
 
-  args.collection[args.current_key] = args.value
-  log:debug("[acp::set_%s] Changed %s to %s", args.label, args.label, args.value)
+  if result.configOptions then
+    self:_apply_config_options(result.configOptions)
+  end
 
+  log:debug("[acp::set_config_option] Changed %s to %s", config_id, value)
   return true
+end
+
+---Flatten session config options
+---@param opts table[]
+---@return table[]
+function Connection.flatten_config_options(opts)
+  return vim
+    .iter(opts)
+    :map(function(item)
+      -- The ACP specification allows options to be grouped
+      -- Ref: https://agentclientprotocol.com/protocol/schema#sessionconfigselectgroup
+      if item.group then
+        return vim.tbl_map(function(val)
+          return vim.tbl_extend("force", val, { group = item.name })
+        end, item.options or {})
+      end
+      return { item }
+    end)
+    :flatten()
+    :totable()
 end
 
 return Connection

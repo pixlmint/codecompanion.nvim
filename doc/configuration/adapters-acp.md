@@ -1,129 +1,10 @@
 ---
-description: Learn how to configure ACP adapters like Claude Code, Gemini CLI and Codex
+description: "Configure Agent Client Protocol (ACP) adapters in CodeCompanion to connect with CLI agents like Claude Code, Codex, Gemini CLI, and OpenCode from Neovim."
 ---
 
 # Configuring ACP Adapters
 
 This section contains configuration which is specific to Agent Client Protocol (ACP) adapters only. There is a lot of shared functionality between ACP and [http](/configuration/adapters-http) adapters. Therefore it's recommended you read the two pages together.
-
-## Configuring Default Adapter
-
-You can select an ACP adapter to be the default for all chat interactions:
-
-```lua
-require("codecompanion").setup({
-  interactions = {
-    chat = {
-      adapter = "gemini_cli",
-    },
-  },
-}),
-```
-
-## Configuring Default Model
-
-You can change the default model used by an ACP adapter. For example, to change the default model for the Claude Code adapter:
-
-::: code-group
-
-```lua [For Interactions] {4-7}
-require("codecompanion").setup({
-  interactions = {
-    chat = {
-      adapter = {
-        name = "claude_code",
-        model = "opus",
-      },
-    },
-  },
-}),
-```
-
-```lua [Adapters: Text] {6-8}
-require("codecompanion").setup({
-  adapters = {
-    acp = {
-      claude_code = function()
-        return require("codecompanion.adapters").extend("claude_code", {
-          defaults = {
-            model = "opus"
-          },
-        })
-      end,
-    }
-  },
-}),
-```
-
-```lua [Adapters: Function] {6-12}
-require("codecompanion").setup({
-  adapters = {
-    acp = {
-      claude_code = function()
-        return require("codecompanion.adapters").extend("claude_code", {
-          defaults = {
-            ---@param self CodeCompanion.ACPAdapter
-            ---@return string
-            model = function(self)
-              return "opus"
-            end,
-          },
-        })
-      end,
-    }
-  },
-}),
-```
-
-:::
-
-Using a _function_ is useful for working around the [limitations](https://github.com/zed-industries/claude-code-acp/issues/225) in the Claude Code SDK (which enables ACP support).
-
-## Configuring Default Mode
-
-You can configure an ACP adapter to start in a specific agent mode (e.g., plan mode) by setting the `defaults.mode` option. This is useful if you want to always start sessions in plan mode or another specific mode.
-
-::: code-group
-
-```lua [Adapters: Text] {6-8}
-require("codecompanion").setup({
-  adapters = {
-    acp = {
-      claude_code = function()
-        return require("codecompanion.adapters").extend("claude_code", {
-          defaults = {
-            mode = "plan"
-          },
-        })
-      end,
-    }
-  },
-}),
-```
-
-```lua [Adapters: Function] {6-12}
-require("codecompanion").setup({
-  adapters = {
-    acp = {
-      claude_code = function()
-        return require("codecompanion.adapters").extend("claude_code", {
-          defaults = {
-            ---@param self CodeCompanion.ACPAdapter
-            ---@return string
-            mode = function(self)
-              return "plan"
-            end,
-          },
-        })
-      end,
-    }
-  },
-}),
-```
-
-:::
-
-The mode is applied automatically after the session is established. Available mode IDs can be viewed using the `/mode` slash command in the chat buffer.
 
 ## Configuring Adapter Settings
 
@@ -154,6 +35,110 @@ require("codecompanion").setup({
   },
 })
 ```
+
+## Setting a Default Adapter
+
+You can select an ACP adapter to be the default for all chat interactions:
+
+```lua
+require("codecompanion").setup({
+  interactions = {
+    chat = {
+      adapter = "gemini_cli",
+    },
+  },
+}),
+```
+
+## Setting Default Session Config Options
+
+The ACP specification has recently added support for [session config options](https://agentclientprotocol.com/protocol/session-config-options). These are lists of configuration options that agents can share with CodeCompanion at the start of a session such as models, reasoning levels, and more.
+
+### Models
+
+There are numerous was you can set a model in your config and it differs significantly from other session config options because of how CodeCompanion integrates adapters and models into the chat interaction.
+
+::: code-group
+
+```lua [Interactions] {4-7}
+require("codecompanion").setup({
+  interactions = {
+    chat = {
+      adapter = {
+        name = "codex",
+        model = "gpt-5.4",
+      },
+    },
+  },
+}),
+```
+
+```lua [Adapter String] {6-10}
+require("codecompanion").setup({
+  adapters = {
+    acp = {
+      codex = function()
+        return require("codecompanion.adapters").extend("codex", {
+          defaults = {
+            session_config_options = {
+              model = "gpt-5.4"
+            },
+          },
+        })
+      end,
+    }
+  },
+}),
+```
+
+```lua [Adapter Function] {6-14}
+require("codecompanion").setup({
+  adapters = {
+    acp = {
+      codex = function()
+        return require("codecompanion.adapters").extend("codex", {
+          defaults = {
+            session_config_options = {
+              ---@param self CodeCompanion.ACPAdapter
+              ---@return string
+              model = function(self)
+                return "gpt-5.4"
+              end,
+            },
+          },
+        })
+      end,
+    }
+  },
+}),
+```
+
+:::
+
+### Others
+
+To set any other session config option, you can pass them in the `defaults.session_config_options` table:
+
+```lua {6-11}
+require("codecompanion").setup({
+  adapters = {
+    acp = {
+      codex = function()
+        return require("codecompanion.adapters").extend("codex", {
+          defaults = {
+            session_config_options = {
+              mode = "Full Access",
+              thought_level = "Xhigh",
+            },
+          },
+        })
+      end,
+    }
+  },
+}),
+```
+
+To find out what the available session config options are for a specific adapter you can open the [debug window](/usage/chat-buffer/#debug-window) in the chat buffer.
 
 ## Configuring MCP Servers
 
@@ -268,9 +253,9 @@ To use [Claude Code](https://www.anthropic.com/claude-code) within CodeCompanion
 ### Using Claude Pro Subscription
 
 3. In your CLI, run `claude setup-token`. You'll be redirected to the Claude.ai website for authorization:
-<img src="https://github.com/user-attachments/assets/28b70ba1-6fd2-4431-9905-c60c83286e4c">
+<img src="https://github.com/user-attachments/assets/28b70ba1-6fd2-4431-9905-c60c83286e4c" alt="Claude Pro Authorization" />
 4. Back in your CLI, copy the OAuth token (in yellow):
-<img src="https://github.com/user-attachments/assets/73992480-20a6-4858-a9fe-93a4e49004ff">
+<img src="https://github.com/user-attachments/assets/73992480-20a6-4858-a9fe-93a4e49004ff" alt="Claude Pro OAuth Token" />
 5. In your CodeCompanion config, extend the `claude_code` adapter and include the OAuth token (see the section on [environment variables and setting API keys](/configuration/adapters-http#environment-variables-setting-an-api-key) for other ways to do this):
 ```lua
 require("codecompanion").setup({
@@ -385,7 +370,20 @@ require("codecompanion").setup({
 
 ## Setup: Goose CLI
 
-To use [Goose](https://block.github.io/goose/) in CodeCompanion, ensure you've followed their [documentation](https://block.github.io/goose/docs/getting-started/installation/) to setup and install Goose CLI. Then ensure that in your chat buffer you select the `goose` adapter.
+To use [Goose](https://goose-docs.ai/) in CodeCompanion, ensure you've followed their [documentation](https://goose-docs.ai/docs/getting-started/installation/) to setup and install Goose CLI. Then ensure that in your chat buffer you select the `goose` adapter.
+
+## Setup: Kilo Code
+
+To use [Kilo Code](https://kilo.ai) in CodeCompanion, ensure you've followed their documentation to [install](https://kilo.ai/docs/getting-started/installing#cli) and [configure](https://kilo.ai/docs/getting-started/setup-authentication#cli) it. Then ensure that in your chat buffer you select the `kilocode` adapter.
+
+You can specify a custom model in your `~/.config/kilo/kilo.json` file:
+
+```json
+{
+    "$schema": "https://kilo.ai/config.json",
+    "model": "kilo/kilo-auto/free",
+}
+```
 
 ## Setup: Kimi CLI
 
@@ -411,4 +409,3 @@ You can specify a custom model in your `~/.config/opencode/config.json` file:
     "model": "github-copilot/claude-sonnet-4.5",
 }
 ```
-
